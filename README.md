@@ -161,6 +161,21 @@ export TERMHARBOR_KEY_PROVIDER=devfile
 - **内置库不进数据库**：内置命令是程序的一部分（同快捷键表），升级自然生效，不需要 seed/合并。
   `snippets` 表留给 M7 的用户自定义片段。
 
+## 自定义片段（部署命令管理）
+
+侧栏「+ 新建」可以把自己项目的更新流程存成一条片段，**分组名当项目名用**：
+
+| 名称 | 分组 | 命令 |
+|---|---|---|
+| 部署 web | web 项目 | `cd /opt/web && git pull && npm ci && npm run build && systemctl reload nginx` |
+| 部署 api | api 服务 | `cd /opt/api && git pull && mvn package -q && systemctl restart api` |
+
+自定义片段排在列表最前面，带「改 / 删」；内置的不可编辑。
+
+**一条硬约束：命令不能换行。** 终端把换行当回车，多行粘贴会**逐行执行**——
+点一下就把部署跑了一半，而且中途某行失败后面的还会继续跑。所以多步必须用 `&&` 连成一行。
+UI 输入时会实时显示这条命令的风险等级（只读 / 会改动系统 / 高危），判定在 Rust 侧。
+
 ## 结构化诊断面板（M4 先做的一部分）
 
 命令片段的输出是给人读的，不是给机器读的。**6 条**（磁盘 / inode / 内存 / 进程 / 端口 / 进程树）除了「插入终端」还能点「表格」：
@@ -210,13 +225,14 @@ pnpm tauri build --bundles nsis   # Windows 安装包，约 3 分钟（增量）
 没装 WebView2 的机器不用管：`webviewInstallMode` 设的是 `downloadBootstrapper`，安装器会自己拉。
 
 > 注意：Windows 未签名，SmartScreen 会提示"未知发布者"，需要点「更多信息 → 仍要运行」。
+> 安装界面为简体中文（`bundle.windows.nsis.languages = ["SimpChinese"]`）。
 
 ## 下一步
 
 M3、M6、诊断面板、设置页、关于页已完成，Windows 安装包能出。剩下：
 
 - **M4 监控、设置与打磨**：`/proc` 只读采集、设置页（字体/字号/主题/回滚行数）、关于页、错误文案全覆盖
-- **M7 自定义片段**：新建/编辑/删除、变量占位符 `{port}`、执行前预览与二次确认
+- **M7 剩余**：变量占位符 `{port}`、执行前预览与二次确认
 - **M5 剩余**：macOS dmg / Linux AppImage+deb、代码签名、三平台回归清单
 
 ### Spike 已完成（见 [docs/spike-notes.md](docs/spike-notes.md)）
