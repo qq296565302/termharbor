@@ -151,7 +151,11 @@ pub fn parse(text: &str) -> LoadSnapshot {
     let (os, kernel) = parse_os(&sections);
 
     if sections.get("stat1").is_none_or(|rows| rows.is_empty()) && warning.is_none() {
-        warning = Some("读不到 /proc/stat —— 可能不是 Linux 系统".to_string());
+        warning = Some(
+            "读不到 /proc/stat：这台机器可能不是 Linux。\
+             Windows 的 OpenSSH 只有终端和 SFTP，没有 /proc，负载看板用不了"
+                .to_string(),
+        );
     }
 
     LoadSnapshot {

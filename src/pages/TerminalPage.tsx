@@ -662,90 +662,96 @@ export default function TerminalPage() {
   return (
     <div className="term-page">
       <div className="term-tabs">
-        {tabs.map((tab) => (
-          <div
-            key={tab.tabId}
-            className={`term-tab ${tab.tabId === activeTabId ? "is-active" : ""}`}
-          >
-            {editingTab === tab.tabId ? (
-              <input
-                className="term-tab__input"
-                autoFocus
-                value={tabDraft}
-                onChange={(event) => setTabDraft(event.target.value)}
-                onBlur={() => commitRename(tab.tabId)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") commitRename(tab.tabId);
-                  if (event.key === "Escape") setEditingTab(null);
-                }}
-              />
-            ) : (
+        {/* 标签区可横向滚动；右侧这组按钮固定在右边，不跟着标签滚走 */}
+        <div className="term-tabs__list">
+          {tabs.map((tab) => (
+            <div
+              key={tab.tabId}
+              className={`term-tab ${tab.tabId === activeTabId ? "is-active" : ""}`}
+            >
+              {editingTab === tab.tabId ? (
+                <input
+                  className="term-tab__input"
+                  autoFocus
+                  value={tabDraft}
+                  onChange={(event) => setTabDraft(event.target.value)}
+                  onBlur={() => commitRename(tab.tabId)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitRename(tab.tabId);
+                    if (event.key === "Escape") setEditingTab(null);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className="term-tab__label"
+                  onClick={() => setActiveTab(tab.tabId)}
+                  onDoubleClick={() => {
+                    setEditingTab(tab.tabId);
+                    setTabDraft(tab.title);
+                  }}
+                  title={`${tab.hostLabel}（双击重命名）`}
+                >
+                  <span
+                    className={`dot dot--${
+                      tab.status === "ready" ? "ok" : tab.status === "failed" ? "warn" : "idle"
+                    }`}
+                  />
+                  <span className="term-tab__title">{tab.title}</span>
+                </button>
+              )}
               <button
                 type="button"
-                className="term-tab__label"
-                onClick={() => setActiveTab(tab.tabId)}
-                onDoubleClick={() => {
-                  setEditingTab(tab.tabId);
-                  setTabDraft(tab.title);
-                }}
-                title={`${tab.hostLabel}（双击重命名）`}
+                className="term-tab__close"
+                title="关闭标签（Ctrl+Shift+W）"
+                onClick={() => closeTab(tab.tabId)}
               >
-                <span
-                  className={`dot dot--${
-                    tab.status === "ready" ? "ok" : tab.status === "failed" ? "warn" : "idle"
-                  }`}
-                />
-                <span className="term-tab__title">{tab.title}</span>
+                ×
               </button>
-            )}
-            <button
-              type="button"
-              className="term-tab__close"
-              title="关闭标签（Ctrl+Shift+W）"
-              onClick={() => closeTab(tab.tabId)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-        <button
-          type="button"
-          className="term-tabs__new"
-          title="新建连接（Ctrl+Shift+T）"
-          onClick={() => setPickerOpen((open) => !open)}
-        >
-          + 新连接
-        </button>
+            </div>
+          ))}
+        </div>
 
-        {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
-        <button
-          type="button"
-          className={`term-tabs__new ${sidePanel === "snippet" ? "is-active" : ""}`}
-          title="命令片段（Ctrl+Shift+P）"
-          onClick={() => togglePanel("snippet")}
-        >
-          片段
-        </button>
+        <div className="term-tabs__actions">
+          <button
+            type="button"
+            className="term-tabs__new"
+            title="新建连接（Ctrl+Shift+T）"
+            onClick={() => setPickerOpen((open) => !open)}
+          >
+            + 新连接
+          </button>
 
-        <button
-          type="button"
-          className={`term-tabs__new ${sidePanel === "files" ? "is-active" : ""}`}
-          title="文件（SFTP，跟着当前标签的服务器走）"
-          disabled={!activeTabId}
-          onClick={() => togglePanel("files")}
-        >
-          文件
-        </button>
+          {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
+          <button
+            type="button"
+            className={`term-tabs__new ${sidePanel === "snippet" ? "is-active" : ""}`}
+            title="命令片段（Ctrl+Shift+P）"
+            onClick={() => togglePanel("snippet")}
+          >
+            片段
+          </button>
 
-        <button
-          type="button"
-          className={`term-tabs__new ${sidePanel === "load" ? "is-active" : ""}`}
-          title="负载看板（CPU / 内存 / 磁盘 / 网络，每 3 秒刷新）"
-          disabled={!activeTabId}
-          onClick={() => togglePanel("load")}
-        >
-          负载
-        </button>
+          <button
+            type="button"
+            className={`term-tabs__new ${sidePanel === "files" ? "is-active" : ""}`}
+            title="文件（SFTP，跟着当前标签的服务器走）"
+            disabled={!activeTabId}
+            onClick={() => togglePanel("files")}
+          >
+            文件
+          </button>
+
+          <button
+            type="button"
+            className={`term-tabs__new ${sidePanel === "load" ? "is-active" : ""}`}
+            title="负载看板（CPU / 内存 / 磁盘 / 网络，每 3 秒刷新）"
+            disabled={!activeTabId}
+            onClick={() => togglePanel("load")}
+          >
+            负载
+          </button>
+        </div>
       </div>
 
       {showPicker ? (

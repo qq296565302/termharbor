@@ -84,12 +84,25 @@ pub fn parent_path(path: &str) -> Option<String> {
         return None;
     }
 
+    // Windows 的 OpenSSH 把盘符映射成 `/C:` 这种形式。盘符根再往上就是 `/`，
+    // 而 `/` 在 Windows 的 sftp-server 上不是一个能列出的目录（会报错）。
+    // 所以盘符根直接当作「没有上一级」，前端把按钮置灰，比弹一个无解的错误好。
+    if is_windows_drive_root(trimmed) {
+        return None;
+    }
+
     match trimmed.rfind('/') {
         Some(0) => Some("/".to_string()),
         Some(index) => Some(trimmed[..index].to_string()),
         // 相对路径没有上级可言，交给前端保持不动
         None => None,
     }
+}
+
+/// 判断 `/C:` / `/c:` 这种盘符根。
+fn is_windows_drive_root(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() == 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':'
 }
 
 #[cfg(test)]
@@ -114,5 +127,15 @@ mod tests {
         assert_eq!(parent_path("/var/log"), Some("/var".to_string()));
         assert_eq!(parent_path("/var/log/"), Some("/var".to_string()));
         assert_eq!(parent_path("/var"), Some("/".to_string()));
+    }
+
+    #[test]
+    fn windows_drive_root_has_no_parent() {
+        // Windows OpenSSH 的路径长这样：/C:/Users/name。
+        // 盘符根再往上走会去列 `/`，而 Windows 的 sftp-server 列不了 `/`，会直接报错。
+        assert_eq!(parent_path("/C:"), None);
+        assert_eq!(parent_path("/C:/"), None);
+        assert_eq!(parent_path("/C:/Users"), Some("/C:".to_string()));
+        assert_eq!(parent_path("/C:/Users/name"), Some("/C:/Users".to_string()));
     }
 }

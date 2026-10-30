@@ -970,11 +970,34 @@ button {
 .term-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-muted);
+}
+
+/* 标签区自己消化溢出：以前整条工具栏都是滚动容器，标签一多按钮就被卷走，
+   看起来忽左忽右 —— 用户说的「按钮太分散」就是这么来的 */
+.term-tabs__list {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.term-tabs__list::-webkit-scrollbar {
+  height: 0;
+}
+
+/* 右侧动作组：永远靠右，彼此留 6px，与标签区之间再隔 10px */
+.term-tabs__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .term-tab {
@@ -1028,7 +1051,6 @@ button {
 }
 
 .term-tabs__new {
-  margin-left: auto;
   padding: 3px 10px;
   border: 1px dashed var(--border-strong);
   border-radius: 6px;

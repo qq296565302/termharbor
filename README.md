@@ -332,6 +332,28 @@ systemd
 维护：Tauri 升级后把官方模板重新拷过来，再套用文件里标了「本地改动」的那一处。
 官方源 `crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi`。
 
+## 能连 Windows 服务器吗
+
+能，但要分清「哪个功能能用」——我们依赖的是服务器上的 OpenSSH，不是 Linux：
+
+| 功能 | Windows 服务器 | 说明 |
+|---|---|---|
+| 终端 | 可以 | 需启用「OpenSSH 服务器」可选功能（Win10 1809+ / Server 2019+）。默认进 `cmd.exe` |
+| SFTP 文件面板 | 可以 | 路径是 `/C:/Users/...` 形式，拼接与跳转按 POSIX 斜杠处理，正好对得上 |
+| 主机指纹 / 密码 / 私钥 | 可以 | 与 Linux 完全一致 |
+| 命令片段（环境准备那组） | 不行 | 全是 apt-get，Windows 用不上 |
+| 诊断面板 / 负载看板 | 不行 | 读的是 `/proc`、`df`、`ps`、`ss`，Windows 没有这些 |
+
+两个已处理的 Windows 细节：
+
+- **盘符根没有「上一级」**：`/C:` 再往上会去列 `/`，Windows 的 sftp-server 列不了 `/` 会报错。
+  现在 `parent_path("/C:")` 直接返回 None，前端把按钮置灰。
+- **看板会说明原因**：读不到 `/proc/stat` 时提示「这台机器可能不是 Linux，
+  Windows 的 OpenSSH 只有终端和 SFTP」，而不是留一块空表格。
+
+终端有个体验差异要先说清：`cmd.exe` 不认 `TERM`，颜色与光标控制基本没有，
+xterm.js 只能显示纯文本流。要在 Windows 上舒服用，把 sshd 的默认 shell 改成 PowerShell 7。
+
 ## 页面结构
 
 左侧导航：**连接 · 终端 · 设置 · 关于**（开发构建额外有「自检」「输入法测试」）。
