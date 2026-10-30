@@ -26,7 +26,7 @@
 │   ├── lib/                  # ipc 封装、错误码映射、DTO 类型
 │   ├── hooks/                # usePing 等
 │   ├── stores/               # uiStore（UI 态）/ sessionStore（会话态）
-│   └── pages/                # 自检页 + 各模块占位页
+│   └── pages/                # 各页面（会话页、连接、设置、关于；自检页仅 dev）
 ├── src-tauri/
 │   ├── migrations/           # SQL 迁移，编译期内嵌
 │   └── src/
@@ -101,7 +101,8 @@ export TERMHARBOR_KEY_PROVIDER=devfile
 - **错误码体系**：`ErrCode` 16 个码，序列化为 `{ code, message, detail }`；detail 构造时即脱敏；前端 `src/lib/errors.ts` 一一对应，禁止直显 Rust 原文。
 - **加密层**：`FieldCipher`（AES-256-GCM，密文自带 1 字节版本号且参与 AAD，nonce 每次随机）；`KeyProvider` 抽象出钥匙串 / 开发期文件两种来源；Argon2id 派生已实现，留给主密码模式。
 - **存储层**：`PRAGMA user_version` 迁移框架，迁移 SQL 编译期内嵌，逐条独立事务；`Db::call` 强制在 `spawn_blocking` 里跑同步 SQLite。
-- **通信层**：Command 请求响应 + Channel 高频推送两条链路，自检页可实时验证。
+- **通信层**：Command 请求响应 + Channel 高频推送两条链路。
+  心跳验证页只在开发构建里保留（`import.meta.env.DEV`），生产包不含这段代码。
 - **脱敏**：`redact()` 文本打码 + `Redacted<T>` 包装器，`Debug` 恒输出 `***`。
 - **CI**：前端类型检查/单测/构建 + Rust fmt/clippy/test 三平台矩阵 + 手动触发的打包冒烟。
 
@@ -304,6 +305,18 @@ systemd
 
 维护：Tauri 升级后把官方模板重新拷过来，再套用文件里标了「本地改动」的那一处。
 官方源 `crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi`。
+
+## 页面结构
+
+左侧导航：**连接 · 终端 · 设置 · 关于**（开发构建额外有「自检」「输入法测试」）。
+
+- 默认落点是**连接页**——服务器的家目录，也是新用户唯一该先看的地方。
+- 原「自检」页降级为**开发构建专用排障工具**：它的运行信息（版本/schema/密钥来源/
+  数据与日志目录）在「关于」页已经有了，Channel 心跳测试也被真正的终端输出取代，
+  M0 的"已完成清单"对使用者没有意义。它还是有个用处——排查"终端没输出/连不上"时，
+  点一下心跳推送能立刻分清是后端不推、还是前端不渲染。
+  `import.meta.env.DEV` 守卫 + 动态 import，生产包里连这段代码都不存在
+  （已验证：`dist/assets/*.js` 里搜不到页面专属文案）。
 
 ## 打包
 

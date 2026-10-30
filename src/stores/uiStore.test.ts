@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveSavedPage } from "./uiStore";
+import { DEFAULT_PAGE, resolveSavedPage } from "./uiStore";
 
 describe("resolveSavedPage", () => {
   it("老存档里的 files 落到终端页", () => {
@@ -17,5 +17,12 @@ describe("resolveSavedPage", () => {
     expect(resolveSavedPage("nope")).toBeNull();
     expect(resolveSavedPage("")).toBeNull();
     expect(resolveSavedPage(null)).toBeNull();
+  });
+});
+
+describe("DEFAULT_PAGE", () => {
+  it("落在连接页，不是自检页", () => {
+    // 自检页现在是开发构建才有的排障页，不能再当应用首页
+    expect(DEFAULT_PAGE).toBe("connections");
   });
 });

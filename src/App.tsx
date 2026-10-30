@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect } from "react";
 
 import { usePing } from "./hooks/usePing";
 import ConnectionsPage from "./pages/ConnectionsPage";
-import SelfCheckPage from "./pages/SelfCheckPage";
 import AboutPage from "./pages/AboutPage";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
@@ -16,7 +15,6 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { id: "selfcheck", label: "自检" },
   { id: "connections", label: "连接" },
   { id: "terminal", label: "终端" },
   { id: "settings", label: "设置" },
@@ -27,7 +25,19 @@ const NAV: NavItem[] = [
 // 生产构建时 Rollup 会把整个动态 import 分支判死，xterm 不会被包进正式产物。
 const ImeTestPage = import.meta.env.DEV ? lazy(() => import("./pages/ImeTestPage")) : null;
 
+/**
+ * 自检页只在开发构建里保留。
+ *
+ * 它原本是 M0 的验收界面（版本/schema/密钥来源/目录 + Channel 心跳 + 已完成清单）。
+ * 现在：运行信息在「关于」页已经有了，Channel 的心跳测试也被真正的终端输出取代，
+ * M0 清单对使用者没有意义。留着当排障工具，但不占用户的导航位置。
+ */
+const SelfCheckPage = import.meta.env.DEV
+  ? lazy(() => import("./pages/SelfCheckPage"))
+  : null;
+
 if (import.meta.env.DEV) {
+  NAV.push({ id: "selfcheck", label: "自检" });
   NAV.push({ id: "ime", label: "输入法测试" });
 }
 
@@ -111,9 +121,11 @@ export default function App() {
         </header>
 
         <section className="content">
-          {activePage === "selfcheck" && (
-            <SelfCheckPage pong={pong} error={error} loading={loading} refresh={refresh} />
-          )}
+          {activePage === "selfcheck" && SelfCheckPage ? (
+            <Suspense fallback={<div className="skeleton">正在加载自检页…</div>}>
+              <SelfCheckPage pong={pong} error={error} loading={loading} refresh={refresh} />
+            </Suspense>
+          ) : null}
 
           {activePage === "connections" && <ConnectionsPage />}
 

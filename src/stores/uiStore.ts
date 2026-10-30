@@ -9,11 +9,12 @@ export type PageId =
   | "ime";
 
 /** 生产构建里没有输入法测试页（S3 的取证页只在 dev 出现）。 */
-const BASE_PAGES = ["selfcheck", "connections", "terminal", "settings", "about"] as const;
+const BASE_PAGES = ["connections", "terminal", "settings", "about"] as const;
 const PAGE_KEY = "termharbor.activePage";
 
 function allowedPages(): readonly string[] {
-  return import.meta.env.DEV ? [...BASE_PAGES, "ime"] : [...BASE_PAGES];
+  // 自检页与输入法测试页只在开发构建里有入口（见 App.tsx 的说明）
+  return import.meta.env.DEV ? [...BASE_PAGES, "selfcheck", "ime"] : [...BASE_PAGES];
 }
 
 /**
@@ -39,6 +40,14 @@ export function resolveSavedPage(saved: string | null | undefined): PageId | nul
   return allowedPages().includes(saved) ? (saved as PageId) : null;
 }
 
+/**
+ * 没有可用存档时的落点：**连接页**。
+ *
+ * 它是一台台服务器的家目录，也是新用户唯一该先看的地方；
+ * 自检页已经降级成开发构建才有的排障工具（见 App.tsx），不能当首页。
+ */
+export const DEFAULT_PAGE: PageId = "connections";
+
 function loadPage(): PageId {
   try {
     const resolved = resolveSavedPage(globalThis.sessionStorage?.getItem(PAGE_KEY));
@@ -46,7 +55,7 @@ function loadPage(): PageId {
   } catch {
     // 无 sessionStorage（隐私模式、测试环境）时静默降级
   }
-  return "selfcheck";
+  return DEFAULT_PAGE;
 }
 
 function savePage(page: PageId): void {
