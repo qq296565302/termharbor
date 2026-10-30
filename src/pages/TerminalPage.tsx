@@ -594,6 +594,9 @@ export default function TerminalPage() {
             onInsert={insertSnippet}
             onView={(kind, label) => void openDiag(kind, label)}
             onClose={() => setSnippetOpen(false)}
+            sessionId={
+              tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null
+            }
           />
         ) : null}
       </div>

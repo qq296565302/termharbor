@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
-import type { DiagKind, SnippetDto } from "../lib/types";
+import type { DiagKind, EnvStatus, SnippetDto } from "../lib/types";
 
 interface Props {
   /** 拿到渲染好的命令文本。插入由父组件负责 —— 它才知道当前活跃会话是谁。 */
@@ -10,6 +10,8 @@ interface Props {
   /** 有诊断类型的片段可以用表格查看，父组件负责取数 */
   onView: (kind: DiagKind, title: string) => void;
   onClose: () => void;
+  /** 当前活跃终端会话。有它才能探测服务器上装了哪些运行时。 */
+  sessionId: string | null;
 }
 
 /**
@@ -18,12 +20,15 @@ interface Props {
  * 一条硬约束：**点击只插入，不执行**（A-12）。
  * 所以这里永远只调 `session_write` 写文本，绝不追加 `\r`。
  */
-export default function SnippetPanel({ onInsert, onView, onClose }: Props) {
+export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: Props) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<SnippetDto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLInputElement>(null);
+  /** 服务器上已经装了哪些运行时。null 表示还没探测（或无会话）。 */
+  const [env, setEnv] = useState<EnvStatus[] | null>(null);
+  const [envError, setEnvError] = useState<string | null>(null);
 
   useEffect(() => {
     searchRef.current?.focus();
@@ -46,6 +51,26 @@ export default function SnippetPanel({ onInsert, onView, onClose }: Props) {
       cancelled = true;
     };
   }, [query]);
+
+  const probeEnv = useCallback(async () => {
+    if (!sessionId) {
+      setEnv(null);
+      return;
+    }
+    try {
+      const rows = await call<EnvStatus[]>("env_probe", { sessionId });
+      setEnv(rows);
+      setEnvError(null);
+    } catch (err) {
+      setEnv(null);
+      setEnvError(fromUnknown(err).message);
+    }
+  }, [sessionId]);
+
+  // 打开面板就探一次：用户点「安装」之前该知道已经装了什么
+  useEffect(() => {
+    void probeEnv();
+  }, [probeEnv]);
 
   const groups = useMemo(() => {
     const bucketed = new Map<string, SnippetDto[]>();
@@ -116,21 +141,55 @@ export default function SnippetPanel({ onInsert, onView, onClose }: Props) {
               </button>
 
               {isCollapsed ? null : (
-                <ul className="snip__items">
+                <>
+                  {group === "环境准备" ? (
+                    <div className="snip__env">
+                      {!sessionId ? (
+                        <span className="snip__env-hint">打开终端后可检测已装环境</span>
+                      ) : envError ? (
+                        <span className="snip__env-hint">{envError}</span>
+                      ) : !env ? (
+                        <span className="snip__env-hint">正在检测服务器上已装的环境…</span>
+                      ) : (
+                        <>
+                          {env.map((item) => (
+                            <span
+                              key={item.name}
+                              className={`snip__env-chip ${item.installed ? "is-on" : "is-off"}`}
+                              title={item.installed ? "已安装" : "未安装"}
+                            >
+                              <span className="snip__env-dot" />
+                              <span className="snip__env-name">{item.name}</span>
+                              {item.version ? (
+                                <span className="snip__env-ver">{item.version}</span>
+                              ) : null}
+                            </span>
+                          ))}
+                          <button
+                            type="button"
+                            className="snip__env-refresh"
+                            onClick={() => void probeEnv()}
+                          >
+                            重新检测
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <ul className="snip__items">
                   {rows.map((item) => (
                     <li key={item.id} className="snip__item">
                       <button
                         type="button"
-                        className="snip__insert"
+                        className={`snip__insert is-${item.risk}`}
                         title={item.description}
                         onClick={() => void insert(item)}
                       >
                         <span className="snip__name">
                           {item.name}
-                          {item.risk !== "readonly" ? (
-                            <span className={`snip__risk is-${item.risk}`}>
-                              {item.risk === "critical" ? "高危" : "危险"}
-                            </span>
+                          {item.risk === "critical" ? (
+                            <span className="snip__risk is-critical">高危</span>
                           ) : null}
                         </span>
                         <code className="snip__cmd">{item.command}</code>
@@ -147,8 +206,9 @@ export default function SnippetPanel({ onInsert, onView, onClose }: Props) {
                         </button>
                       ) : null}
                     </li>
-                  ))}
-                </ul>
+                    ))}
+                  </ul>
+                </>
               )}
             </section>
           );

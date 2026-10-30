@@ -185,3 +185,11 @@ export interface Settings {
   /** 终端回滚缓冲行数 */
   scrollback: number;
 }
+
+/** 对应 `snippets::EnvStatus` */
+export interface EnvStatus {
+  name: string;
+  installed: boolean;
+  /** 从版本串里抠出的纯版本号，认不出为 null */
+  version: string | null;
+}

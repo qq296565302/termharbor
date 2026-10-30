@@ -108,6 +108,7 @@ pub fn run() {
             commands::sftp::sftp_cancel,
             commands::snippets::snippet_list,
             commands::snippets::snippet_render,
+            commands::snippets::env_probe,
             commands::diag::diag_run,
             commands::settings::settings_get,
             commands::settings::settings_update,

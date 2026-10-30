@@ -2240,3 +2240,143 @@ button {
   font-family: var(--mono);
   font-size: 11px;
 }
+
+/* ------------------------------------------------------------ 片段侧栏视觉优化 */
+
+/* 加宽一点：命令那行经常被截断 */
+.snip {
+  flex: 0 0 300px;
+  width: 300px;
+}
+
+.snip__search {
+  height: 30px;
+  margin: 9px 10px;
+  width: calc(100% - 20px);
+  border-radius: 7px;
+}
+
+/* 分组头吸顶：14 条环境准备滚下去之后还知道自己在哪一组 */
+.snip__group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--bg);
+}
+
+.snip__group-head:hover {
+  background: var(--bg-muted);
+}
+
+.snip__items {
+  gap: 4px;
+  padding: 6px 0 6px 2px;
+}
+
+/* 用左侧色条代替小标签：扫一眼就知道哪条会改系统 */
+.snip__insert {
+  position: relative;
+  padding: 6px 9px 6px 13px;
+  border-radius: 7px;
+}
+
+.snip__insert::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: width 120ms ease;
+}
+
+.snip__insert.is-dangerous::before {
+  background: var(--warn);
+}
+
+.snip__insert.is-critical::before {
+  background: var(--danger);
+}
+
+.snip__insert:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-muted);
+}
+
+.snip__insert:hover::before {
+  width: 3px;
+}
+
+.snip__name {
+  font-size: 12.5px;
+}
+
+.snip__cmd {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* 环境探测结果：一行 chips，绿点=已装，虚线圈=未装 */
+.snip__env {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 4px 8px 6px;
+}
+
+.snip__env-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 10.5px;
+  color: var(--text);
+}
+
+.snip__env-chip.is-off {
+  border-style: dashed;
+  color: var(--text-faint);
+}
+
+.snip__env-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.snip__env-chip.is-on .snip__env-dot {
+  background: var(--ok);
+}
+
+.snip__env-ver {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.snip__env-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.snip__env-refresh {
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.snip__env-refresh:hover {
+  color: var(--accent);
+}

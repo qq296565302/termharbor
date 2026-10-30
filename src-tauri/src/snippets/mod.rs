@@ -148,6 +148,7 @@ const BUILTIN: &[Builtin] = &[
         group: "网络",
     },
     // ---- 环境准备（有副作用，风险等级会被判为危险或高危）----
+    // 顺序按组件排：同一组件的「安装 / 卸载」挨着，用户不用在两个组之间来回找
     Builtin {
         id: "env.apt-update",
         name: "更新包索引",
@@ -156,10 +157,17 @@ const BUILTIN: &[Builtin] = &[
         group: "环境准备",
     },
     Builtin {
-        id: "env.tools",
-        name: "安装常用工具",
-        command: "sudo apt-get install -y curl wget git vim tmux htop unzip",
-        description: "一次装齐日常排查要用的几个：下载、版本控制、编辑器、多路复用、系统监视、解压",
+        id: "env.git",
+        name: "安装 Git",
+        command: "sudo apt-get install -y git",
+        description: "拉代码、部署脚本几乎都要它；装完用 git --version 确认",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.rm-git",
+        name: "卸载 Git",
+        command: "sudo apt-get remove --purge -y git && sudo apt-get autoremove -y",
+        description: "--purge 连配置一起删。注意有些部署脚本和定时任务依赖 git，卸之前先确认",
         group: "环境准备",
     },
     Builtin {
@@ -177,10 +185,52 @@ const BUILTIN: &[Builtin] = &[
         group: "环境准备",
     },
     Builtin {
+        id: "env.rm-node",
+        name: "卸载 Node.js",
+        command: "sudo apt-get remove --purge -y nodejs && sudo apt-get autoremove -y",
+        description: "只删系统包；用 npm -g 装过的全局包残留在 /usr/lib/node_modules，需要手动清",
+        group: "环境准备",
+    },
+    Builtin {
         id: "env.docker",
         name: "安装 Docker",
         command: "curl -fsSL https://get.docker.com | sudo sh",
         description: "官方一键脚本。高危：从网络下载并执行；生产环境更稳的做法是按官方文档加 apt 仓库分步装",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.rm-docker",
+        name: "卸载 Docker",
+        command: "sudo apt-get remove --purge -y docker-ce docker-ce-cli containerd.io docker-compose-plugin && sudo apt-get autoremove -y",
+        description: "包删了但 /var/lib/docker 里的镜像和容器数据还在，要一并清掉得再 rm -rf（高危，自行确认）",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.nginx",
+        name: "安装 Nginx",
+        command: "sudo apt-get install -y nginx",
+        description: "装完可配合「端口监听」确认 80 端口是否起来；改配置前先 nginx -t 检查语法",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.rm-nginx",
+        name: "卸载 Nginx",
+        command: "sudo apt-get remove --purge -y nginx nginx-common && sudo apt-get autoremove -y",
+        description: "--purge 会删掉 /etc/nginx 下的站点配置，有自定义配置先备份",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.tools",
+        name: "安装常用工具",
+        command: "sudo apt-get install -y curl wget vim tmux htop unzip",
+        description: "日常排查要用的几个：下载、编辑器、多路复用、系统监视、解压。Git 单独一条，见上",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.rm-tools",
+        name: "卸载常用工具",
+        command: "sudo apt-get remove --purge -y curl wget vim tmux htop unzip",
+        description: "不含 git —— 很多流程依赖它，要卸请用「卸载 Git」",
         group: "环境准备",
     },
     Builtin {
@@ -191,10 +241,10 @@ const BUILTIN: &[Builtin] = &[
         group: "环境准备",
     },
     Builtin {
-        id: "env.nginx",
-        name: "安装 Nginx",
-        command: "sudo apt-get install -y nginx",
-        description: "装完可配合「端口监听」确认 80 端口是否起来；改配置前先 nginx -t 检查语法",
+        id: "env.rm-build",
+        name: "卸载编译工具链",
+        command: "sudo apt-get remove --purge -y build-essential && sudo apt-get autoremove -y",
+        description: "卸完 gcc/make 就没了，之后编译任何东西都要重装",
         group: "环境准备",
     },
     Builtin {
@@ -307,6 +357,75 @@ pub fn classify_risk(command: &str) -> RiskLevel {
     }
 
     RiskLevel::Readonly
+}
+
+/// 环境探测：一次问清哪些运行时已经装了。
+///
+/// 为什么不做成「每条安装命令前面加检查」：那样每条命令会多出 40+ 字符，
+/// 插入终端后难看清，而且用户点之前还是不知道装没装。
+/// 一次探测 + 侧栏展示，才知道「该装哪个」。
+pub const PROBE_COMMAND: &str = "for c in git python3 node npm docker nginx; do printf '%s=' \"$c\"; command -v \"$c\" >/dev/null 2>&1 && \"$c\" --version 2>&1 | head -1 || echo \"\"; done";
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvStatus {
+    pub name: String,
+    pub installed: bool,
+    /// 从版本串里抠出来的纯版本号，认不出就是 None
+    pub version: Option<String>,
+}
+
+/// 解析探测输出。每行格式是 `名字=版本串`，未安装时版本串为空。
+pub fn parse_probe(text: &str) -> Vec<EnvStatus> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once('=')?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+
+            let rest = rest.trim();
+            Some(EnvStatus {
+                name: name.to_string(),
+                installed: !rest.is_empty(),
+                version: first_version(rest),
+            })
+        })
+        .collect()
+}
+
+/// 从 `git version 2.43.0` / `nginx version: nginx/1.24.0` / `Docker version 24.0.7, build x`
+/// 里抠出 `2.43.0` / `1.24.0` / `24.0.7`。
+///
+/// 各家的版本输出格式完全不统一，与其为每个工具写一条正则，不如统一找
+/// 「第一段由数字和点组成的、且含至少一个点的字串」。
+fn first_version(raw: &str) -> Option<String> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut index = 0;
+
+    while index < chars.len() {
+        if !chars[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        let mut has_dot = false;
+        while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '.') {
+            if chars[index] == '.' {
+                has_dot = true;
+            }
+            index += 1;
+        }
+
+        if has_dot {
+            let candidate: String = chars[start..index].iter().collect();
+            return Some(candidate.trim_end_matches('.').to_string());
+        }
+    }
+
+    None
 }
 
 /// 哪些片段能在诊断面板里以表格展示。
@@ -465,6 +584,55 @@ mod tests {
             .find(|item| item.id == "sys.runtimes")
             .expect("检查运行时版本应当存在");
         assert_eq!(classify_risk(probe.command), RiskLevel::Readonly);
+    }
+
+    #[test]
+    fn probe_output_is_parsed_with_versions() {
+        let raw = "\
+git=git version 2.43.0
+python3=Python 3.12.3
+node=
+docker=Docker version 24.0.7, build afdd53b
+nginx=nginx version: nginx/1.24.0
+";
+        let parsed = parse_probe(raw);
+
+        assert_eq!(parsed.len(), 5);
+        assert_eq!(parsed[0].name, "git");
+        assert!(parsed[0].installed);
+        assert_eq!(parsed[0].version.as_deref(), Some("2.43.0"));
+
+        assert_eq!(parsed[2].name, "node");
+        assert!(!parsed[2].installed, "空版本串表示没装");
+        assert_eq!(parsed[2].version, None);
+
+        assert_eq!(
+            parsed[3].version.as_deref(),
+            Some("24.0.7"),
+            "Docker 的版本后面跟着 build 号，要能截出来"
+        );
+        assert_eq!(
+            parsed[4].version.as_deref(),
+            Some("1.24.0"),
+            "nginx 的版本前缀是 nginx/，也要能认"
+        );
+    }
+
+    #[test]
+    fn probe_ignores_blank_and_malformed_lines() {
+        assert!(parse_probe("").is_empty());
+        assert!(parse_probe("\n\n").is_empty());
+        assert!(parse_probe("没有等号的一行").is_empty());
+        // 有等号但名字为空，属于噪声
+        assert!(parse_probe("=foo").is_empty());
+    }
+
+    #[test]
+    fn probe_command_covers_everything_we_have_installers_for() {
+        // 探测清单要和「环境准备」里能装的东西对得上，否则侧栏会显示"未安装"但实际装了
+        for tool in ["git", "python3", "node", "docker", "nginx"] {
+            assert!(PROBE_COMMAND.contains(tool), "探测命令里缺少 {tool}");
+        }
     }
 
     #[test]
