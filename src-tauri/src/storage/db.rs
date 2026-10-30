@@ -17,13 +17,46 @@ pub struct Db {
 impl Db {
     /// 打开（必要时创建）配置库，并升级到最新 schema。
     pub fn open(path: impl AsRef<Path>) -> AppResult<Self> {
+        Self::open_with_snapshot(path, None)
+    }
+
+    /// 打开库，并在**跑迁移之前**留一份快照。
+    ///
+    /// 顺序有讲究：`wal_checkpoint(TRUNCATE)` 必须在拷文件之前做，
+    /// 否则 WAL 里还没合并的数据会漏在快照外（表现为「恢复后少了几条最新配置」）。
+    pub fn open_with_snapshot(
+        path: impl AsRef<Path>,
+        backup_dir: Option<&Path>,
+    ) -> AppResult<Self> {
         let path = path.as_ref().to_path_buf();
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
 
+        // 必须在 Connection::open 之前判断：打开会把文件建出来，
+        // 之后再判断永远是「存在」，首次启动也会拷一份空库出来。
+        let existed = path.exists();
+
         let mut conn = Connection::open(&path)?;
         configure(&conn)?;
+
+        if let Some(dir) = backup_dir {
+            if !existed {
+                // 首次启动：没有库可备份，跳过
+            } else {
+                // checkpoint 会返回 (busy, log, checkpointed) 三列，必须用 query_row
+                let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+                match crate::storage::backup::snapshot(&path, dir, crate::storage::backup::KEEP) {
+                    Ok(Some(file)) => tracing::info!(file = %file.display(), "已保存启动快照"),
+                    Ok(None) => {}
+                    Err(err) => {
+                        // 备份失败不该拦住启动
+                        tracing::warn!(error = %err, "启动快照失败，继续启动");
+                    }
+                }
+            }
+        }
+
         migrations::apply(&mut conn)?;
 
         tracing::info!(
@@ -123,6 +156,41 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, crate::error::ErrCode::StorageError);
+    }
+
+    /// 首次启动不该产生空快照，第二次启动才该有。
+    ///
+    /// 这条守着一个真实的坑：`Connection::open` 会把文件建出来，
+    /// 如果在打开之后才判断「库是否存在」，首次启动也会拷一份空库出来，
+    /// 用户会在设置页看到一堆 0 台服务器的快照。
+    #[test]
+    fn snapshot_starts_from_the_second_launch() {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("termharbor-db-{}-{unique}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let db_file = dir.join("termharbor.db");
+        let backup_dir = dir.join("backups");
+
+        // 第一次：库还不存在
+        drop(Db::open_with_snapshot(&db_file, Some(&backup_dir)).unwrap());
+        assert!(
+            crate::storage::backup::list(&backup_dir)
+                .unwrap()
+                .is_empty(),
+            "首次启动不该产生快照"
+        );
+
+        // 第二次：库已存在，应当留一份
+        drop(Db::open_with_snapshot(&db_file, Some(&backup_dir)).unwrap());
+        let items = crate::storage::backup::list(&backup_dir).unwrap();
+        assert_eq!(items.len(), 1, "第二次启动应当留一份快照");
+        assert_eq!(items[0].connections, Some(0), "新库里有 0 条连接");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

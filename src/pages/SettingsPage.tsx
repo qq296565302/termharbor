@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Settings, TerminalTheme } from "../lib/types";
+import { fromUnknown } from "../lib/errors";
+import { call } from "../lib/ipc";
+import type { BackupDto, Settings, TerminalTheme } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 
 /** 主题色板。终端背景色同时用于 `.term-body`，否则切浅色后四周还是黑的。 */
@@ -33,6 +35,21 @@ const SCROLLBACK_MIN = 1000;
 const SCROLLBACK_MAX = 50000;
 const COMMIT_DELAY = 400;
 
+/** 快照时间：本地时间到分钟就够了，秒没有信息量。 */
+function formatTime(ms: number): string {
+  const date = new Date(ms);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export default function SettingsPage() {
   const settings = useSettingsStore((state) => state.settings);
   const saving = useSettingsStore((state) => state.saving);
@@ -64,6 +81,63 @@ export default function SettingsPage() {
   };
 
   const palette = TERM_THEMES[settings.theme];
+
+  // ---------------------------------------------------------------- 数据备份
+
+  const [backups, setBackups] = useState<BackupDto[]>([]);
+  const [backupDir, setBackupDir] = useState<string>("");
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  /** 正在二次确认的恢复项（文件名） */
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+
+  const loadBackups = useCallback(async () => {
+    try {
+      const [items, dir] = await Promise.all([
+        call<BackupDto[]>("backup_list"),
+        call<string>("backup_dir"),
+      ]);
+      setBackups(items);
+      setBackupDir(dir);
+      setBackupError(null);
+    } catch (err) {
+      setBackupError(fromUnknown(err).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBackups();
+  }, [loadBackups]);
+
+  const createBackup = async () => {
+    setBackupBusy(true);
+    setBackupError(null);
+    try {
+      await call<boolean>("backup_create");
+      await loadBackups();
+      setBackupNotice("已保存一份快照。");
+    } catch (err) {
+      setBackupError(fromUnknown(err).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const restoreBackup = async (name: string) => {
+    setBackupBusy(true);
+    setBackupError(null);
+    try {
+      await call<boolean>("backup_restore", { name });
+      setConfirmRestore(null);
+      // 不清掉提示：用户必须看到「重启才生效」，否则会以为恢复失败了
+      setBackupNotice("已安排恢复。关掉应用再打开才会生效（重新启动前会自动备份当前数据）。");
+    } catch (err) {
+      setBackupError(fromUnknown(err).message);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
 
   return (
     <div className="settings-page">
@@ -142,6 +216,81 @@ export default function SettingsPage() {
         <p className="settings__hint">
           终端最多记住多少行历史。调大能翻更久之前的输出，但每个会话都会多占内存。
         </p>
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
+          <span>数据备份</span>
+          <button
+            type="button"
+            className="btn btn--small"
+            disabled={backupBusy}
+            onClick={() => void createBackup()}
+          >
+            {backupBusy ? "处理中…" : "立即备份"}
+          </button>
+        </div>
+        <p className="settings__hint">
+          每次启动都会自动留一份快照，保留最近 5 份。装新版本时如果勾了「删除应用数据」，
+          连接配置会被清掉 —— 这时候可以在这里恢复。
+        </p>
+
+        {backupError ? <p className="settings__error">{backupError}</p> : null}
+        {backupNotice ? <p className="settings__notice">{backupNotice}</p> : null}
+
+        {backups.length === 0 ? (
+          <p className="settings__hint">还没有快照。</p>
+        ) : (
+          <ul className="settings__backups">
+            {backups.map((item) => (
+              <li key={item.name} className="settings__backup">
+                <span className="settings__backup-time">{formatTime(item.createdMs)}</span>
+                <span className="settings__backup-meta">
+                  {item.connections === null ? "连接数未知" : `${item.connections} 台服务器`}
+                  {" · "}
+                  {formatBytes(item.bytes)}
+                </span>
+                {confirmRestore === item.name ? (
+                  <span className="settings__backup-actions">
+                    <button
+                      type="button"
+                      className="btn btn--small btn--danger"
+                      disabled={backupBusy}
+                      onClick={() => void restoreBackup(item.name)}
+                    >
+                      确认恢复
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--small"
+                      onClick={() => setConfirmRestore(null)}
+                    >
+                      取消
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    disabled={backupBusy}
+                    onClick={() => {
+                      setBackupNotice(null);
+                      setConfirmRestore(item.name);
+                    }}
+                  >
+                    恢复
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {backupDir ? (
+          <p className="settings__hint">
+            快照目录：<span className="settings__path">{backupDir}</span>
+          </p>
+        ) : null}
       </section>
 
       <section className="settings__group">

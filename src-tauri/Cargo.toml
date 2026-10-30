@@ -1,6 +1,6 @@
 [package]
 name = "termharbor"
-version = "0.1.1"
+version = "0.1.2"
 description = "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理客户端"
 authors = ["TermHarbor"]
 edition = "2021"

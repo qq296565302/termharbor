@@ -1,28 +1,29 @@
 :root {
-  /* 赛博朋克深色：近黑偏蓝的底 + 霓虹青主色。
-     不用纯黑（#000）：纯黑会让发光看起来发脏，也不利于区分层级。 */
-  --bg: #080b14;
-  --bg-muted: #0f1524;
-  --bg-sunken: #0b1120;
-  --border: rgba(56, 189, 199, 0.16);
-  --border-strong: rgba(56, 189, 199, 0.34);
-  --text: #d8e6f2;
-  --text-muted: #8aa0bb;
-  --text-faint: #5b708c;
-  --accent: #2dd4bf;
-  --accent-soft: rgba(45, 212, 191, 0.12);
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --danger: #fb4570;
-  --danger-soft: rgba(251, 69, 112, 0.14);
-  /* 发光只在这里定义强度，改一处就能整体调暗/调亮 */
-  --glow: 0 0 14px -2px rgba(45, 212, 191, 0.45);
+  /* 浅色 + 赛博朋克点缀：冷白底 + 青绿主色 + 洋红告警。
+     上一版做成深色，用户反馈「太黑了」——生产工具长时间盯着看，浅底更省眼。
+     霓虹感靠强调色和细光线保留，不靠把整块背景压黑。 */
+  --bg: #f5f8fb;
+  --bg-muted: #e9eff6;
+  --bg-sunken: #edf2f8;
+  --border: rgba(13, 148, 136, 0.16);
+  --border-strong: rgba(13, 148, 136, 0.34);
+  --text: #0d1b2a;
+  --text-muted: #47607a;
+  --text-faint: #7b8ca1;
+  --accent: #0d9488;
+  --accent-soft: rgba(13, 148, 136, 0.1);
+  --ok: #0d9f6e;
+  --warn: #b45309;
+  --danger: #d81b60;
+  --danger-soft: rgba(216, 27, 96, 0.1);
+  /* 发光强度集中在这里，整体调亮/调暗只改这一处 */
+  --glow: 0 0 12px -2px rgba(13, 148, 136, 0.35);
   --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     system-ui, sans-serif;
 
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -353,6 +354,13 @@ button {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* 列表行内的小按钮：设置页的备份列表、恢复确认都用它 */
+.btn--small {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11.5px;
 }
 
 .btn--primary:hover:not(:disabled) {
@@ -1091,7 +1099,8 @@ button {
   display: flex;
   flex: 1;
   min-height: 0;
-  background: #0f1b2a;
+  /* 兜底色跟主题走：终端自己会铺背景，但首帧和侧栏留白处用的是这里 */
+  background: var(--bg-sunken);
 }
 
 /* 终端实例的定位容器。侧栏出现时它变窄，ResizeObserver 会重新 fit */
@@ -2525,36 +2534,37 @@ button {
   color: var(--accent);
 }
 
-/* ============================================================ 赛博朋克点缀 */
-/* 只加在"高可见度、低干扰"的位置：导航、顶栏、品牌、按钮、滚动条。
-   不做背景网格 / 扫描线 —— 长时间盯终端会累，而且多层不透明面板会把它盖住。 */
+/* ============================================================ 赛博朋克点缀（浅色版） */
+/* 原则：浅底上的「发光」不能靠亮色叠加，那样只会糊成一片。
+   改成三条：细光线（1px 青）、左侧霓虹条、极淡的渐变底色。
+   只加在高可见度、低干扰的位置：侧栏、品牌、导航、顶栏、按钮、滚动条。 */
 
-/* 侧栏右缘一条极淡的青光，把导航区和内容区分开 */
+/* 侧栏右缘一条 1px 青色分隔线，右侧再压一层极淡的投影把内容区托起来 */
 .sidebar {
   box-shadow:
-    1px 0 0 0 rgba(45, 212, 191, 0.07),
-    10px 0 28px -20px rgba(45, 212, 191, 0.55);
+    1px 0 0 0 rgba(13, 148, 136, 0.14),
+    8px 0 20px -20px rgba(13, 148, 136, 0.45);
 }
 
-/* 品牌标记发光；文字给一点微弱辉光，不刺眼 */
+/* 品牌标记：浅底上 drop-shadow 要更收敛，否则边缘发灰 */
 .brand__mark {
-  filter: drop-shadow(0 0 9px rgba(45, 212, 191, 0.5));
+  filter: drop-shadow(0 2px 6px rgba(13, 148, 136, 0.28));
 }
 
 .brand__text strong {
   letter-spacing: 0.6px;
-  text-shadow: 0 0 14px rgba(45, 212, 191, 0.32);
 }
 
 .brand__text span {
   letter-spacing: 1.2px;
   text-transform: uppercase;
   font-size: 10px;
+  color: var(--text-faint);
 }
 
-/* 当前页：左侧霓虹条 + 向右渐隐的底色 */
+/* 当前页：左侧 2px 霓虹条 + 向右渐隐的底色 */
 .nav__item.is-active {
-  background: linear-gradient(90deg, rgba(45, 212, 191, 0.18), rgba(45, 212, 191, 0.01));
+  background: linear-gradient(90deg, rgba(13, 148, 136, 0.16), rgba(13, 148, 136, 0.01));
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
@@ -2562,7 +2572,7 @@ button {
   color: var(--accent);
 }
 
-/* 顶栏底边一条渐隐光线 */
+/* 顶栏底边一条中间亮、两端渐隐的光线 */
 .topbar {
   position: relative;
 }
@@ -2574,26 +2584,26 @@ button {
   bottom: -1px;
   left: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.55), transparent);
+  background: linear-gradient(90deg, transparent, rgba(13, 148, 136, 0.5), transparent);
 }
 
 .topbar h1 {
   letter-spacing: 0.5px;
 }
 
-/* 主按钮悬停时描边发光 */
+/* 主按钮悬停：一圈青环，比投影更干净 */
 .btn--primary:hover:not(:disabled) {
   box-shadow:
-    0 0 0 1px rgba(45, 212, 191, 0.45),
-    0 0 18px -6px rgba(45, 212, 191, 0.85);
+    0 0 0 1px rgba(13, 148, 136, 0.5),
+    0 2px 10px -4px rgba(13, 148, 136, 0.5);
 }
 
-/* 当前终端标签：底部一道光线，比整块高亮更克制 */
+/* 当前终端标签：底部一道光线，比整块高亮克制 */
 .term-tab.is-active {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-/* 滚动条换成暗色霓虹，深色底上默认的浅色滚动条很突兀 */
+/* 滚动条：默认的浅灰在冷白底上几乎看不见 */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -2606,19 +2616,77 @@ button {
 ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 6px;
-  background: rgba(45, 212, 191, 0.18);
+  background: rgba(13, 148, 136, 0.28);
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(45, 212, 191, 0.36);
+  background: rgba(13, 148, 136, 0.48);
   background-clip: padding-box;
 }
 
-/* 输入框聚焦：描边换成青色并带一层淡光 */
+/* 输入框聚焦：青色描边 + 一圈淡光 */
 .input:focus,
 .input:focus-visible {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
   outline: none;
+}
+
+/* ------------------------------------------------------------ 设置页 · 数据备份 */
+
+.settings__notice {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings__path {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  word-break: break-all;
+  user-select: text;
+}
+
+.settings__backups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings__backup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-sunken);
+  font-size: 12px;
+}
+
+.settings__backup-time {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.settings__backup-meta {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.settings__backup-actions {
+  display: flex;
+  gap: 4px;
 }

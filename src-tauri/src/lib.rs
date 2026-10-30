@@ -28,6 +28,37 @@ use crate::ssh::session::SessionManager;
 use crate::state::{AppPaths, AppState};
 use crate::storage::Db;
 
+/// 库空但快照有数据时打一条 warn。
+fn warn_if_db_emptied(db: &Db, backup_dir: &std::path::Path) {
+    let current = db
+        .inner()
+        .lock()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM connections", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .ok()
+        })
+        .unwrap_or(-1);
+
+    if current != 0 {
+        return;
+    }
+
+    let Ok(items) = crate::storage::backup::list(backup_dir) else {
+        return;
+    };
+
+    if let Some(found) = items.iter().find(|item| item.connections.unwrap_or(0) > 0) {
+        tracing::warn!(
+            snapshot = %found.name,
+            servers = ?found.connections,
+            "当前没有任何连接，但历史快照里有数据 —— 可在设置页「数据备份」中恢复"
+        );
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -36,12 +67,28 @@ pub fn run() {
             let logging = logging::init(&paths.log_dir, "info")?;
 
             tracing::info!(
-                version = env!("CARGO_PKG_VERSION"),
+                version = app.package_info().version.to_string(),
                 data_dir = %paths.data_dir.display(),
                 "TermHarbor 启动"
             );
 
-            let db = Arc::new(Db::open(&paths.db_file)?);
+            // 有待恢复的快照就先换上去（用户在上次会话里点了「恢复」）。
+            // 必须在 Db::open 之前：换文件时不能有连接开着。
+            match crate::storage::backup::apply_pending_restore(&paths.db_file, &paths.backup_dir) {
+                Ok(Some(file)) => tracing::warn!(file = %file.display(), "已恢复数据快照"),
+                Ok(None) => {}
+                Err(err) => tracing::error!(error = %err, "应用待恢复快照失败"),
+            }
+
+            let db = Arc::new(Db::open_with_snapshot(
+                &paths.db_file,
+                Some(paths.backup_dir.as_path()),
+            )?);
+
+            // 自检：当前库是空的、但历史快照里有数据 —— 几乎可以断定数据目录被清过
+            // （装新版本时勾了「删除应用数据」就是这个症状）。留一条 warn，
+            // 用户来问「数据没了」时日志里直接有答案，不用再翻文件时间戳。
+            warn_if_db_emptied(&db, &paths.backup_dir);
 
             let provider = default_provider(&paths.data_dir);
             let key_source = provider.source();
@@ -111,6 +158,10 @@ pub fn run() {
             commands::snippets::snippet_save,
             commands::snippets::snippet_delete,
             commands::snippets::snippet_classify,
+            commands::backup::backup_list,
+            commands::backup::backup_create,
+            commands::backup::backup_restore,
+            commands::backup::backup_dir,
             commands::snippets::env_probe,
             commands::diag::diag_run,
             commands::settings::settings_get,

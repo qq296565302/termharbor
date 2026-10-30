@@ -195,3 +195,13 @@ export interface EnvStatus {
   /** 从版本串里抠出的纯版本号，认不出为 null */
   version: string | null;
 }
+
+/** 对应 `commands::backup::BackupDto` */
+export interface BackupDto {
+  /** 文件名，恢复时用它指定 */
+  name: string;
+  createdMs: number;
+  bytes: number;
+  /** 快照里的连接数，读不出来为 null */
+  connections: number | null;
+}

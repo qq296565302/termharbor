@@ -5,6 +5,7 @@
 //! 单个 WAL 连接足够，且能省掉 `r2d2-sqlite` 与 `rusqlite` 的版本锁步问题。
 //! 所有访问都在 `spawn_blocking` 里进行，不会阻塞 Tokio 工作线程。
 
+pub mod backup;
 pub mod connections;
 pub mod db;
 pub mod known_hosts;

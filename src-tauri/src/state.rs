@@ -18,6 +18,10 @@ pub struct AppPaths {
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
     pub db_file: PathBuf,
+    /// 快照目录。**故意不在 data_dir 里面** —— 卸载器会把整个
+    /// `%APPDATA%\com.termharbor.app` 删掉（含这里的 data_dir），
+    /// 快照必须放在那条删除路径之外才有意义，见 `storage::backup`。
+    pub backup_dir: PathBuf,
 }
 
 impl AppPaths {
@@ -33,10 +37,13 @@ impl AppPaths {
             .app_log_dir()
             .map_err(|e| AppError::internal(format!("无法定位日志目录: {e}")))?;
 
+        let backup_dir = crate::storage::backup::dir(&data_dir);
+
         Ok(Self {
             db_file: data_dir.join("termharbor.db"),
             data_dir,
             log_dir,
+            backup_dir,
         })
     }
 }
