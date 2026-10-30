@@ -23,6 +23,7 @@ import type {
 } from "../lib/types";
 import DiagPanel from "./DiagPanel";
 import FilePanel from "./FilePanel";
+import LoadPanel from "./LoadPanel";
 import { TERM_THEMES } from "./SettingsPage";
 import { useSessionStore, type TerminalTab } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -375,9 +376,13 @@ export default function TerminalPage() {
   const [connections, setConnections] = useState<ConnectionDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [snippetOpen, setSnippetOpen] = useState(false);
-  /** 右侧文件面板。与命令片段互斥 —— 两个都开窗口就太挤了。 */
-  const [filesOpen, setFilesOpen] = useState(false);
+  /**
+   * 右侧辅助面板：命令片段 / 文件 / 负载。
+   *
+   * 用联合状态而不是三个布尔，是为了让「同时只能开一个」成为**类型上的事实**，
+   * 而不是靠每个按钮里手写 `setOther(false)` 维持 —— 那种写法迟早漏一处。
+   */
+  const [sidePanel, setSidePanel] = useState<"snippet" | "files" | "load" | null>(null);
   /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
   const [filePanels, setFilePanels] = useState<string[]>([]);
   /**
@@ -518,9 +523,9 @@ export default function TerminalPage() {
    * 之后切走保留挂载（`hidden`），否则每切一次标签都要重连 SFTP。
    */
   useEffect(() => {
-    if (!filesOpen || !activeTabId) return;
+    if (sidePanel !== "files" || !activeTabId) return;
     setFilePanels((prev) => (prev.includes(activeTabId) ? prev : [...prev, activeTabId]));
-  }, [filesOpen, activeTabId]);
+  }, [sidePanel, activeTabId]);
 
   // 标签关掉后把它对应的面板一起清掉，否则会留一个没人管的 SFTP 会话
   useEffect(() => {
@@ -561,6 +566,11 @@ export default function TerminalPage() {
     } catch {
       // 存不进去只是下次回到默认宽度，不影响使用
     }
+  };
+
+  /** 再点一次同一个按钮就收起。 */
+  const togglePanel = (panel: "snippet" | "files" | "load") => {
+    setSidePanel((current) => (current === panel ? null : panel));
   };
 
   const openDiag = async (kind: DiagKind, label: string) => {
@@ -623,9 +633,7 @@ export default function TerminalPage() {
 
       if (event.shiftKey && event.code === "KeyP") {
         stop();
-        setSnippetOpen((open) => !open);
-        // 与按钮行为一致：打开片段时收掉文件面板，否则终端被挤成一条缝
-        setFilesOpen(false);
+        setSidePanel((current) => (current === "snippet" ? null : "snippet"));
         return;
       }
 
@@ -712,28 +720,31 @@ export default function TerminalPage() {
         {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
         <button
           type="button"
-          className={`term-tabs__new ${snippetOpen ? "is-active" : ""}`}
+          className={`term-tabs__new ${sidePanel === "snippet" ? "is-active" : ""}`}
           title="命令片段（Ctrl+Shift+P）"
-          onClick={() => {
-            // 与文件面板互斥：两个侧栏同时开，终端只剩一条缝
-            setSnippetOpen((open) => !open);
-            setFilesOpen(false);
-          }}
+          onClick={() => togglePanel("snippet")}
         >
           片段
         </button>
 
         <button
           type="button"
-          className={`term-tabs__new ${filesOpen ? "is-active" : ""}`}
+          className={`term-tabs__new ${sidePanel === "files" ? "is-active" : ""}`}
           title="文件（SFTP，跟着当前标签的服务器走）"
           disabled={!activeTabId}
-          onClick={() => {
-            setFilesOpen((open) => !open);
-            setSnippetOpen(false);
-          }}
+          onClick={() => togglePanel("files")}
         >
           文件
+        </button>
+
+        <button
+          type="button"
+          className={`term-tabs__new ${sidePanel === "load" ? "is-active" : ""}`}
+          title="负载看板（CPU / 内存 / 磁盘 / 网络，每 3 秒刷新）"
+          disabled={!activeTabId}
+          onClick={() => togglePanel("load")}
+        >
+          负载
         </button>
       </div>
 
@@ -778,18 +789,26 @@ export default function TerminalPage() {
           ))}
         </div>
 
-        {snippetOpen ? (
+        {sidePanel === "snippet" ? (
           <SnippetPanel
             onInsert={insertSnippet}
             onView={(kind, label) => void openDiag(kind, label)}
-            onClose={() => setSnippetOpen(false)}
+            onClose={() => setSidePanel(null)}
             sessionId={
               tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null
             }
           />
         ) : null}
 
-        {filesOpen ? (
+        {sidePanel === "load" ? (
+          <LoadPanel
+            sessionId={tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null}
+            active={pageActive}
+            onClose={() => setSidePanel(null)}
+          />
+        ) : null}
+
+        {sidePanel === "files" ? (
           <aside className="term-files" style={{ width: filesWidth }}>
             <div
               className="term-files__grip"
@@ -809,7 +828,7 @@ export default function TerminalPage() {
                 type="button"
                 className="term-files__close"
                 title="关闭文件面板（SFTP 连接会一起关掉）"
-                onClick={() => setFilesOpen(false)}
+                onClick={() => setSidePanel(null)}
               >
                 ×
               </button>

@@ -164,6 +164,7 @@ pub fn run() {
             commands::backup::backup_dir,
             commands::snippets::env_probe,
             commands::diag::diag_run,
+            commands::diag::load_snapshot,
             commands::settings::settings_get,
             commands::settings::settings_update,
         ])

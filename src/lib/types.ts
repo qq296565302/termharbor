@@ -207,3 +207,72 @@ export interface BackupDto {
   /** 快照里的连接数，读不出来为 null */
   connections: number | null;
 }
+
+/** 对应 `monitor::load::CpuLoad` */
+export interface CpuLoad {
+  percent: number;
+  /** 每个核心的使用率，顺序与 cpu0/cpu1 一致 */
+  cores: number[];
+  coresCount: number;
+}
+
+/** 对应 `monitor::load::MemoryLoad` */
+export interface MemoryLoad {
+  totalKb: number;
+  usedKb: number;
+  availableKb: number;
+  cachedKb: number;
+  buffersKb: number;
+  percent: number;
+  swapTotalKb: number;
+  swapUsedKb: number;
+  swapPercent: number;
+}
+
+/** 对应 `monitor::load::DiskLoad` */
+export interface DiskLoad {
+  filesystem: string;
+  mount: string;
+  size: string;
+  used: string;
+  available: string;
+  percent: number;
+}
+
+/** 对应 `monitor::load::NetLoad` */
+export interface NetLoad {
+  name: string;
+  rxBps: number;
+  txBps: number;
+  rxTotal: number;
+  txTotal: number;
+}
+
+/** 对应 `monitor::load::TopProc` */
+export interface TopProc {
+  pid: number;
+  name: string;
+  cpu: number;
+  mem: number;
+}
+
+/** 对应 `monitor::load::LoadSnapshot` */
+export interface LoadSnapshot {
+  os: string;
+  kernel: string;
+  uptimeSecs: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  running: number;
+  totalProcs: number;
+  cpu: CpuLoad;
+  memory: MemoryLoad;
+  disks: DiskLoad[];
+  nets: NetLoad[];
+  processes: TopProc[];
+  sessions: number;
+  tcpEstablished: number;
+  windowMs: number;
+  warning: string | null;
+}

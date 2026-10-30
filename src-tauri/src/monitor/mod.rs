@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+pub mod load;
+
 use crate::ssh::exec;
 
 /// 诊断类型。前端传 `"disk"` 这类字符串。
