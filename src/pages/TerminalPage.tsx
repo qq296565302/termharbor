@@ -288,6 +288,9 @@ export default function TerminalPage() {
   /** 插入片段后 +1，让终端重新拿回焦点 */
   const [focusTick, setFocusTick] = useState(0);
   const [snippetNotice, setSnippetNotice] = useState<string | null>(null);
+  /** 正在重命名的标签（双击标题进入） */
+  const [editingTab, setEditingTab] = useState<string | null>(null);
+  const [tabDraft, setTabDraft] = useState("");
   /** 诊断浮层。null 表示没打开。 */
   const [diag, setDiag] = useState<{
     kind: DiagKind;
@@ -353,6 +356,11 @@ export default function TerminalPage() {
     },
     [openTab],
   );
+
+  const commitRename = (tabId: string) => {
+    useSessionStore.getState().renameTab(tabId, tabDraft);
+    setEditingTab(null);
+  };
 
   /**
    * 把片段插入当前活跃会话。
@@ -475,19 +483,37 @@ export default function TerminalPage() {
             key={tab.tabId}
             className={`term-tab ${tab.tabId === activeTabId ? "is-active" : ""}`}
           >
-            <button
-              type="button"
-              className="term-tab__label"
-              onClick={() => setActiveTab(tab.tabId)}
-              title={tab.hostLabel}
-            >
-              <span
-                className={`dot dot--${
-                  tab.status === "ready" ? "ok" : tab.status === "failed" ? "warn" : "idle"
-                }`}
+            {editingTab === tab.tabId ? (
+              <input
+                className="term-tab__input"
+                autoFocus
+                value={tabDraft}
+                onChange={(event) => setTabDraft(event.target.value)}
+                onBlur={() => commitRename(tab.tabId)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") commitRename(tab.tabId);
+                  if (event.key === "Escape") setEditingTab(null);
+                }}
               />
-              <span className="term-tab__title">{tab.title}</span>
-            </button>
+            ) : (
+              <button
+                type="button"
+                className="term-tab__label"
+                onClick={() => setActiveTab(tab.tabId)}
+                onDoubleClick={() => {
+                  setEditingTab(tab.tabId);
+                  setTabDraft(tab.title);
+                }}
+                title={`${tab.hostLabel}（双击重命名）`}
+              >
+                <span
+                  className={`dot dot--${
+                    tab.status === "ready" ? "ok" : tab.status === "failed" ? "warn" : "idle"
+                  }`}
+                />
+                <span className="term-tab__title">{tab.title}</span>
+              </button>
+            )}
             <button
               type="button"
               className="term-tab__close"

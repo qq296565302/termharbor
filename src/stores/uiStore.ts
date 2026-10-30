@@ -1,9 +1,16 @@
 import { create } from "zustand";
 
-export type PageId = "selfcheck" | "connections" | "terminal" | "files" | "settings" | "ime";
+export type PageId =
+  | "selfcheck"
+  | "connections"
+  | "terminal"
+  | "files"
+  | "settings"
+  | "about"
+  | "ime";
 
 /** 生产构建里没有输入法测试页（S3 的取证页只在 dev 出现）。 */
-const BASE_PAGES = ["selfcheck", "connections", "terminal", "files", "settings"] as const;
+const BASE_PAGES = ["selfcheck", "connections", "terminal", "files", "settings", "about"] as const;
 const PAGE_KEY = "termharbor.activePage";
 
 function allowedPages(): readonly string[] {

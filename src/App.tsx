@@ -4,6 +4,7 @@ import { usePing } from "./hooks/usePing";
 import ConnectionsPage from "./pages/ConnectionsPage";
 import FilesPage from "./pages/FilesPage";
 import SelfCheckPage from "./pages/SelfCheckPage";
+import AboutPage from "./pages/AboutPage";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
 import { useSessionStore } from "./stores/sessionStore";
@@ -21,6 +22,7 @@ const NAV: NavItem[] = [
   { id: "terminal", label: "终端" },
   { id: "files", label: "文件" },
   { id: "settings", label: "设置" },
+  { id: "about", label: "关于" },
 ];
 
 // S3 的输入法取证页只在开发构建里出现。用 import.meta.env.DEV 做守卫，
@@ -37,6 +39,7 @@ const TITLES: Record<PageId, string> = {
   terminal: "终端会话",
   files: "SFTP 文件",
   settings: "设置",
+  about: "关于",
   ime: "输入法测试",
 };
 
@@ -134,6 +137,8 @@ export default function App() {
           ) : null}
 
           {activePage === "settings" && <SettingsPage />}
+
+          {activePage === "about" && <AboutPage pong={pong} />}
         </section>
 
         <footer className="statusbar">

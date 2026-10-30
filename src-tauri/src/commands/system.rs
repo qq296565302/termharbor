@@ -18,7 +18,7 @@ use crate::state::{now_millis, AppState};
 pub struct Pong {
     pub ok: bool,
     pub product: &'static str,
-    pub version: &'static str,
+    pub version: String,
     pub schema_version: i32,
     pub latest_schema_version: i32,
     pub key_source: &'static str,
@@ -29,7 +29,7 @@ pub struct Pong {
 }
 
 #[tauri::command]
-pub async fn ping(state: State<'_, AppState>) -> AppResult<Pong> {
+pub async fn ping(app: tauri::AppHandle, state: State<'_, AppState>) -> AppResult<Pong> {
     let schema_version = state
         .db
         .call(|conn| Ok(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i32>(0))?))
@@ -40,7 +40,9 @@ pub async fn ping(state: State<'_, AppState>) -> AppResult<Pong> {
     Ok(Pong {
         ok: !state.is_locked(),
         product: "TermHarbor 终端港",
-        version: env!("CARGO_PKG_VERSION"),
+        // 版本号唯一来源是 tauri.conf.json（安装包版本），不再用 CARGO_PKG_VERSION，
+        // 否则两处版本迟早会漂移，用户报 bug 时报的版本和安装包对不上。
+        version: app.package_info().version.to_string(),
         schema_version,
         latest_schema_version: crate::storage::migrations::latest_version(),
         key_source: state.key_source.as_str(),

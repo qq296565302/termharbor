@@ -30,6 +30,8 @@ interface SessionState {
   setActiveTab: (tabId: string | null) => void;
   markOpened: (tabId: string, sessionId: string) => void;
   markStatus: (tabId: string, status: SessionStatus, error?: string) => void;
+  /** 只改显示标题；`hostLabel` 保持不变，否则用户会以为连到了别的主机 */
+  renameTab: (tabId: string, title: string) => void;
   markBySession: (sessionId: string, status: SessionStatus, error?: string) => void;
 }
 
@@ -68,6 +70,15 @@ export const useSessionStore = create<SessionState>((set) => ({
         tab.tabId === tabId ? { ...tab, sessionId, status: "ready", error: undefined } : tab,
       ),
     })),
+
+  renameTab: (tabId, title) => {
+    const trimmed = title.trim();
+    // 空标题在这里也挡一道：别处调用忘了校验时不至于把标签搞成空白
+    if (!trimmed) return;
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (tab.tabId === tabId ? { ...tab, title: trimmed } : tab)),
+    }));
+  },
 
   markStatus: (tabId, status, error) =>
     set((state) => ({
