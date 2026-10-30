@@ -1,24 +1,28 @@
 :root {
-  --bg: #ffffff;
-  --bg-muted: #f7f7f8;
-  --bg-sunken: #fbfbfc;
-  --border: #e6e6ea;
-  --border-strong: #d5d5db;
-  --text: #1a1a1c;
-  --text-muted: #6b6b73;
-  --text-faint: #9a9aa2;
-  --accent: #185fa5;
-  --accent-soft: #e6f1fb;
-  --ok: #1d9e75;
-  --warn: #ba7517;
-  --danger: #a32d2d;
-  --danger-soft: #fcebeb;
-  --radius: 10px;
+  /* 赛博朋克深色：近黑偏蓝的底 + 霓虹青主色。
+     不用纯黑（#000）：纯黑会让发光看起来发脏，也不利于区分层级。 */
+  --bg: #080b14;
+  --bg-muted: #0f1524;
+  --bg-sunken: #0b1120;
+  --border: rgba(56, 189, 199, 0.16);
+  --border-strong: rgba(56, 189, 199, 0.34);
+  --text: #d8e6f2;
+  --text-muted: #8aa0bb;
+  --text-faint: #5b708c;
+  --accent: #2dd4bf;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #fb4570;
+  --danger-soft: rgba(251, 69, 112, 0.14);
+  /* 发光只在这里定义强度，改一处就能整体调暗/调亮 */
+  --glow: 0 0 14px -2px rgba(45, 212, 191, 0.45);
+  --radius: 8px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     system-ui, sans-serif;
 
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -2519,4 +2523,102 @@ button {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* ============================================================ 赛博朋克点缀 */
+/* 只加在"高可见度、低干扰"的位置：导航、顶栏、品牌、按钮、滚动条。
+   不做背景网格 / 扫描线 —— 长时间盯终端会累，而且多层不透明面板会把它盖住。 */
+
+/* 侧栏右缘一条极淡的青光，把导航区和内容区分开 */
+.sidebar {
+  box-shadow:
+    1px 0 0 0 rgba(45, 212, 191, 0.07),
+    10px 0 28px -20px rgba(45, 212, 191, 0.55);
+}
+
+/* 品牌标记发光；文字给一点微弱辉光，不刺眼 */
+.brand__mark {
+  filter: drop-shadow(0 0 9px rgba(45, 212, 191, 0.5));
+}
+
+.brand__text strong {
+  letter-spacing: 0.6px;
+  text-shadow: 0 0 14px rgba(45, 212, 191, 0.32);
+}
+
+.brand__text span {
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+/* 当前页：左侧霓虹条 + 向右渐隐的底色 */
+.nav__item.is-active {
+  background: linear-gradient(90deg, rgba(45, 212, 191, 0.18), rgba(45, 212, 191, 0.01));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.nav__item.is-active:hover {
+  color: var(--accent);
+}
+
+/* 顶栏底边一条渐隐光线 */
+.topbar {
+  position: relative;
+}
+
+.topbar::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.55), transparent);
+}
+
+.topbar h1 {
+  letter-spacing: 0.5px;
+}
+
+/* 主按钮悬停时描边发光 */
+.btn--primary:hover:not(:disabled) {
+  box-shadow:
+    0 0 0 1px rgba(45, 212, 191, 0.45),
+    0 0 18px -6px rgba(45, 212, 191, 0.85);
+}
+
+/* 当前终端标签：底部一道光线，比整块高亮更克制 */
+.term-tab.is-active {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* 滚动条换成暗色霓虹，深色底上默认的浅色滚动条很突兀 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: rgba(45, 212, 191, 0.18);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(45, 212, 191, 0.36);
+  background-clip: padding-box;
+}
+
+/* 输入框聚焦：描边换成青色并带一层淡光 */
+.input:focus,
+.input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12);
+  outline: none;
 }
