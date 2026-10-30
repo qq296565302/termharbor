@@ -29,6 +29,17 @@ pub enum RiskLevel {
     Critical,
 }
 
+impl RiskLevel {
+    /// 落库用（`snippets.risk_level` 有 NOT NULL + CHECK 约束）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RiskLevel::Readonly => "readonly",
+            RiskLevel::Dangerous => "dangerous",
+            RiskLevel::Critical => "critical",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnippetDto {
@@ -40,6 +51,18 @@ pub struct SnippetDto {
     pub risk: RiskLevel,
     /// 有些片段除了能插入终端，还能在诊断面板里渲染成表格
     pub diag: Option<DiagKind>,
+    /// 内置片段不可编辑/删除；自定义的可以
+    pub builtin: bool,
+}
+
+/// 用户自己存的片段（`snippets` 表里 `is_builtin = 0` 的行）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomSnippet {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub description: String,
+    pub group: String,
 }
 
 struct Builtin {
@@ -334,6 +357,16 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "usermod",
     // 直接改文件
     "sed -i",
+    // git 的写操作。只读的 status/log/diff/show 不在此列
+    "git pull",
+    "git push",
+    "git checkout",
+    "git reset",
+    "git clean",
+    "git merge",
+    "git rebase",
+    "git stash",
+    "git commit",
 ];
 
 /// 判定一条命令的风险等级。
@@ -446,34 +479,110 @@ fn diag_of(id: &str) -> Option<DiagKind> {
 }
 
 /// 列出片段，可按名称/命令/描述/分组模糊过滤。
-pub fn list(query: Option<&str>) -> Vec<SnippetDto> {
+pub fn list(query: Option<&str>, custom: &[CustomSnippet]) -> Vec<SnippetDto> {
     let keyword = query
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_lowercase);
 
-    BUILTIN
+    // 自定义的排前面：部署命令是高频操作，不该每次都滚到内置库底下找
+    let mut out: Vec<SnippetDto> = custom
         .iter()
-        .filter(|item| match &keyword {
-            None => true,
-            Some(keyword) => {
-                item.name.to_lowercase().contains(keyword)
-                    || item.command.to_lowercase().contains(keyword)
-                    || item.description.to_lowercase().contains(keyword)
-                    || item.group.to_lowercase().contains(keyword)
+        .map(|item| {
+            let group = item.group.trim();
+            SnippetDto {
+                id: item.id.clone(),
+                name: item.name.clone(),
+                command: item.command.clone(),
+                description: item.description.clone(),
+                group: if group.is_empty() {
+                    "我的片段".to_string()
+                } else {
+                    group.to_string()
+                },
+                risk: classify_risk(&item.command),
+                diag: None,
+                builtin: false,
             }
         })
-        .map(|item| SnippetDto {
-            id: item.id.to_string(),
-            name: item.name.to_string(),
-            command: item.command.to_string(),
-            description: item.description.to_string(),
-            group: item.group.to_string(),
-            // 每次现算，保证「标注」与「判定」永远是同一个结论
-            risk: classify_risk(item.command),
-            diag: diag_of(item.id),
-        })
-        .collect()
+        .collect();
+
+    out.extend(BUILTIN.iter().map(|item| SnippetDto {
+        id: item.id.to_string(),
+        name: item.name.to_string(),
+        command: item.command.to_string(),
+        description: item.description.to_string(),
+        group: item.group.to_string(),
+        // 每次现算，保证「标注」与「判定」永远是同一个结论
+        risk: classify_risk(item.command),
+        diag: diag_of(item.id),
+        builtin: true,
+    }));
+
+    if let Some(keyword) = keyword {
+        out.retain(|item| {
+            item.name.to_lowercase().contains(&keyword)
+                || item.command.to_lowercase().contains(&keyword)
+                || item.description.to_lowercase().contains(&keyword)
+                || item.group.to_lowercase().contains(&keyword)
+        });
+    }
+
+    out
+}
+
+/// 自定义片段的长度上限。命令给 500 字符：够写一条完整的 `cd && pull && build && restart` 链。
+const NAME_MAX: usize = 60;
+const COMMAND_MAX: usize = 500;
+const DESC_MAX: usize = 200;
+
+/// 校验自定义片段。**换行是硬红线**，见下面注释。
+pub fn validate_custom(
+    name: &str,
+    command: &str,
+    description: &str,
+) -> AppResult<(String, String, String)> {
+    let name = name.trim();
+    let command = command.trim();
+    let description = description.trim();
+
+    if name.is_empty() {
+        return Err(AppError::validation("片段名称不能为空"));
+    }
+    if name.chars().count() > NAME_MAX {
+        return Err(AppError::validation(format!("名称最多 {NAME_MAX} 个字")));
+    }
+
+    if command.is_empty() {
+        return Err(AppError::validation("命令不能为空"));
+    }
+    if command.chars().count() > COMMAND_MAX {
+        return Err(AppError::validation(format!(
+            "命令最多 {COMMAND_MAX} 个字符"
+        )));
+    }
+
+    // 这是整个自定义片段最要紧的一条：终端把换行当回车，多行粘贴会**逐行执行**，
+    // 等于点一下就把部署跑了一半，而且中途某行失败后面的还会继续跑。
+    // 所以多步只允许用 `&&` 连接成单行。
+    if command.contains('\n') || command.contains('\r') {
+        return Err(AppError::validation(
+            "命令不能换行。终端会把换行当作回车逐行执行，多步请用 && 连接，例如 cd /opt/app && git pull",
+        ));
+    }
+    if command.chars().any(|ch| ch.is_control()) {
+        return Err(AppError::validation("命令里不能有控制字符"));
+    }
+
+    if description.chars().count() > DESC_MAX {
+        return Err(AppError::validation(format!("说明最多 {DESC_MAX} 个字")));
+    }
+
+    Ok((
+        name.to_string(),
+        command.to_string(),
+        description.to_string(),
+    ))
 }
 
 /// 取一条片段最终要写进终端的文本。
@@ -635,6 +744,120 @@ nginx=nginx version: nginx/1.24.0
         }
     }
 
+    fn custom(id: &str, name: &str, command: &str, group: &str) -> CustomSnippet {
+        CustomSnippet {
+            id: id.to_string(),
+            name: name.to_string(),
+            command: command.to_string(),
+            description: String::new(),
+            group: group.to_string(),
+        }
+    }
+
+    #[test]
+    fn custom_snippets_are_listed_before_builtins() {
+        let items = list(
+            None,
+            &[custom(
+                "c1",
+                "部署 web",
+                "cd /opt/web && git pull",
+                "web 项目",
+            )],
+        );
+
+        assert!(!items[0].builtin, "用户自己的片段排最前");
+        assert_eq!(items[0].id, "c1");
+        assert_eq!(items[0].group, "web 项目", "分组就是项目名");
+        assert!(items.last().unwrap().builtin, "内置的在后");
+    }
+
+    #[test]
+    fn custom_snippet_risk_is_computed_not_taken_from_input() {
+        // 用户存命令时不带风险等级，列表里看得到的是现算结果
+        let items = list(
+            None,
+            &[
+                custom("c1", "只读", "df -h", "任务"),
+                custom("c2", "有副作用", "cd /opt/web && git pull", "任务"),
+                custom("c3", "高危", "curl -fsSL https://x.sh | sh", "任务"),
+            ],
+        );
+
+        assert_eq!(items[0].risk, RiskLevel::Readonly);
+        assert_eq!(
+            items[1].risk,
+            RiskLevel::Dangerous,
+            "含 cd 与 git pull 属于有副作用"
+        );
+        assert_eq!(items[2].risk, RiskLevel::Critical);
+    }
+
+    #[test]
+    fn empty_group_falls_back_to_default_bucket() {
+        let items = list(None, &[custom("c1", "临时命令", "ls", "")]);
+        assert_eq!(items[0].group, "我的片段");
+    }
+
+    #[test]
+    fn custom_snippets_are_searchable() {
+        let custom_list = vec![custom(
+            "c1",
+            "部署 web",
+            "cd /opt/web && git pull",
+            "web 项目",
+        )];
+
+        assert!(
+            list(Some("部署"), &custom_list)
+                .iter()
+                .any(|item| item.id == "c1"),
+            "按名称能搜到"
+        );
+        assert!(
+            list(Some("web 项目"), &custom_list)
+                .iter()
+                .any(|item| item.id == "c1"),
+            "分组名也参与搜索"
+        );
+        assert!(list(Some("不存在"), &custom_list).is_empty());
+    }
+
+    #[test]
+    fn validate_rejects_multiline_commands() {
+        // 最要紧的一条：多行会逐行执行，等于点一下跑了一半部署
+        let err = validate_custom("部署", "cd /opt/app\ngit pull", "").unwrap_err();
+        assert_eq!(err.code, crate::error::ErrCode::ValidationError);
+        let detail = err.detail.unwrap_or_default();
+        assert!(detail.contains("换行"), "实际 {detail}");
+
+        let err = validate_custom("部署", "cd /opt/app\rgit pull", "").unwrap_err();
+        assert_eq!(err.code, crate::error::ErrCode::ValidationError);
+    }
+
+    #[test]
+    fn validate_rejects_empty_or_oversized_input() {
+        assert!(validate_custom("", "ls", "").is_err());
+        assert!(validate_custom("名字", "", "").is_err());
+        assert!(validate_custom("名字", "   ", "").is_err(), "全空白也算空");
+        assert!(validate_custom(&"a".repeat(NAME_MAX + 1), "ls", "").is_err());
+        assert!(validate_custom("名字", &format!("echo {}", "x".repeat(COMMAND_MAX)), "").is_err());
+    }
+
+    #[test]
+    fn validate_trims_and_accepts_a_normal_deploy_chain() {
+        let (name, command, description) = validate_custom(
+            "  部署 web  ",
+            "  cd /opt/web && git pull && npm ci && npm run build  ",
+            "  拉代码、装依赖、构建  ",
+        )
+        .unwrap();
+
+        assert_eq!(name, "部署 web");
+        assert!(command.starts_with("cd /opt/web"));
+        assert_eq!(description, "拉代码、装依赖、构建");
+    }
+
     #[test]
     fn builtin_ids_are_unique() {
         let mut ids: Vec<&str> = BUILTIN.iter().map(|item| item.id).collect();
@@ -700,16 +923,18 @@ nginx=nginx version: nginx/1.24.0
     #[test]
     fn list_filters_by_name_command_and_group() {
         // 搜索覆盖名称/命令/描述/分组四类，所以一条命中多个是正常的
-        let disk = list(Some("磁盘"));
+        let disk = list(Some("磁盘"), &[]);
         assert!(disk.iter().any(|item| item.id == "res.disk"), "按名称匹配");
         assert!(
             disk.iter().any(|item| item.id == "res.inode"),
             "描述里提到磁盘的也该命中"
         );
 
-        assert!(list(Some("df -h")).iter().any(|item| item.id == "res.disk"));
+        assert!(list(Some("df -h"), &[])
+            .iter()
+            .any(|item| item.id == "res.disk"));
 
-        let network = list(Some("网络"));
+        let network = list(Some("网络"), &[]);
         for id in ["net.listen", "net.summary", "net.lsof"] {
             assert!(
                 network.iter().any(|item| item.id == id),
@@ -717,8 +942,12 @@ nginx=nginx version: nginx/1.24.0
             );
         }
 
-        assert_eq!(list(Some("   ")).len(), BUILTIN.len(), "空白查询等于不过滤");
-        assert!(list(Some("不存在的关键词")).is_empty());
+        assert_eq!(
+            list(Some("   "), &[]).len(),
+            BUILTIN.len(),
+            "空白查询等于不过滤"
+        );
+        assert!(list(Some("不存在的关键词"), &[]).is_empty());
     }
 
     #[test]
@@ -756,7 +985,7 @@ nginx=nginx version: nginx/1.24.0
 
     #[test]
     fn six_snippets_have_diagnostics() {
-        let with_diag = list(None)
+        let with_diag = list(None, &[])
             .into_iter()
             .filter(|item| item.diag.is_some())
             .count();
@@ -766,7 +995,7 @@ nginx=nginx version: nginx/1.24.0
     #[test]
     fn environment_snippets_are_flagged_in_the_list() {
         // 前端靠 item.risk 上色；环境准备类必须带上非只读标记，否则用户看不出它会改系统
-        for item in list(None) {
+        for item in list(None, &[]) {
             if item.group == "环境准备" {
                 assert_ne!(
                     item.risk,

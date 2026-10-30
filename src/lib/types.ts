@@ -154,6 +154,8 @@ export interface SnippetDto {
   risk: SnippetRisk;
   /** 非 null 时可以在诊断面板里以表格查看 */
   diag: DiagKind | null;
+  /** 内置片段不可编辑/删除 */
+  builtin: boolean;
 }
 
 /** 诊断类型，对应 `monitor::DiagKind` */

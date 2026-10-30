@@ -2401,3 +2401,122 @@ button {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* ------------------------------------------------------------ 片段：新建/编辑 */
+
+.snip__head-spacer {
+  flex: 1;
+}
+
+.snip__new {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.snip__new:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.snip__form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-sunken);
+}
+
+.snip__form-input {
+  width: 100%;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.snip__form-cmd {
+  min-height: 56px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.snip__form-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.snip__form-hint code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg);
+  font-family: var(--mono);
+}
+
+.snip__form-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.snip__form-risk {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+
+.snip__form-risk.is-dangerous {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.snip__form-risk.is-critical {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 自定义片段的两个小操作按钮 */
+.snip__edit,
+.snip__confirm {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.snip__icon-btn {
+  width: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 20px;
+}
+
+.snip__icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.snip__icon-btn.is-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 工具栏上的「片段」入口，打开时高亮 */
+.term-tabs__new.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}

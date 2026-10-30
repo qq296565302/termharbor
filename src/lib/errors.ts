@@ -97,11 +97,17 @@ export function fromUnknown(err: unknown): AppError {
     return err;
   }
   if (isErrorPayload(err)) {
-    return new AppError(
-      isKnownCode(err.code) ? err.code : "UNKNOWN",
-      messageFor(err.code, err.message),
-      err.detail ?? null,
-    );
+    const code = isKnownCode(err.code) ? err.code : "UNKNOWN";
+
+    // 校验错误的 detail 就是给人看的具体原因（「命令不能换行」这种），
+    // 而 message 是固定文案「输入内容不合法」。只显示 message 等于没说，
+    // 所以这一类把 detail 顶到 message 上。
+    // 其他错误仍然遵循「detail 不外露」（可能含主机名、路径等内部信息）。
+    if (code === "VALIDATION_ERROR" && err.detail) {
+      return new AppError(code, err.detail, err.detail);
+    }
+
+    return new AppError(code, messageFor(err.code, err.message), err.detail ?? null);
   }
   if (err instanceof Error) {
     return new AppError("UNKNOWN", err.message);

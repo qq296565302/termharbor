@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
-import type { DiagKind, EnvStatus, SnippetDto } from "../lib/types";
+import type { DiagKind, EnvStatus, SnippetDto, SnippetRisk } from "../lib/types";
 
 interface Props {
   /** 拿到渲染好的命令文本。插入由父组件负责 —— 它才知道当前活跃会话是谁。 */
@@ -14,11 +14,36 @@ interface Props {
   sessionId: string | null;
 }
 
+/** 新建 / 编辑表单的草稿。 */
+interface Draft {
+  id: string | null;
+  name: string;
+  group: string;
+  command: string;
+  description: string;
+}
+
+const RISK_LABEL: Record<SnippetRisk, string> = {
+  readonly: "只读",
+  dangerous: "会改动系统",
+  critical: "高危",
+};
+
+const EMPTY_DRAFT: Draft = {
+  id: null,
+  name: "",
+  group: "",
+  command: "",
+  description: "",
+};
+
 /**
  * 命令片段侧栏（需求 5.7.5）。
  *
- * 一条硬约束：**点击只插入，不执行**（A-12）。
- * 所以这里永远只调 `session_write` 写文本，绝不追加 `\r`。
+ * 两条硬约束：
+ * 1. **点击只插入，不执行**（A-12）：这里永远只调 `session_write` 写文本，绝不追加 `\r`。
+ * 2. **命令不允许换行**：终端把换行当回车，多行粘贴会逐行执行，
+ *    等于点一下就把部署跑了一半。多步要用 `&&` 连接（校验在 Rust 侧）。
  */
 export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: Props) {
   const [query, setQuery] = useState("");
@@ -29,28 +54,34 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
   /** 服务器上已经装了哪些运行时。null 表示还没探测（或无会话）。 */
   const [env, setEnv] = useState<EnvStatus[] | null>(null);
   const [envError, setEnvError] = useState<string | null>(null);
+  /** 正在编辑的草稿；null 表示没打开表单。 */
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draftRisk, setDraftRisk] = useState<SnippetRisk>("readonly");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  /** 待确认删除的片段 id */
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    // 过滤在 Rust 侧做：名称/命令/描述/分组四类字段都在那里
-    call<SnippetDto[]>("snippet_list", { query: query.trim() || null })
-      .then((rows) => {
-        if (!cancelled) {
-          setItems(rows);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(fromUnknown(err).message);
+  const reload = useCallback(async (keyword: string) => {
+    try {
+      // 过滤在 Rust 侧做：名称/命令/描述/分组四类字段都在那里
+      const rows = await call<SnippetDto[]>("snippet_list", {
+        query: keyword.trim() || null,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [query]);
+      setItems(rows);
+      setError(null);
+    } catch (err) {
+      setError(fromUnknown(err).message);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload(query);
+  }, [query, reload]);
 
   const probeEnv = useCallback(async () => {
     if (!sessionId) {
@@ -72,6 +103,25 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
     void probeEnv();
   }, [probeEnv]);
 
+  // 输入命令时实时显示风险等级。判定走后端，前端不得自己算（SEC-SN-10）
+  useEffect(() => {
+    if (!draft) return;
+
+    const command = draft.command;
+    if (!command.trim()) {
+      setDraftRisk("readonly");
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      call<SnippetRisk>("snippet_classify", { command })
+        .then(setDraftRisk)
+        .catch(() => undefined);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [draft]);
+
   const groups = useMemo(() => {
     const bucketed = new Map<string, SnippetDto[]>();
     for (const item of items) {
@@ -92,10 +142,71 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
     }
   };
 
+  const openCreate = () => {
+    setFormError(null);
+    setDeleting(null);
+    setDraft({ ...EMPTY_DRAFT });
+  };
+
+  const openEdit = (item: SnippetDto) => {
+    setFormError(null);
+    setDeleting(null);
+    setDraft({
+      id: item.id,
+      name: item.name,
+      group: item.group,
+      command: item.command,
+      description: item.description,
+    });
+  };
+
+  const save = async () => {
+    if (!draft || saving) return;
+
+    setSaving(true);
+    setFormError(null);
+    try {
+      await call<SnippetDto>("snippet_save", {
+        input: {
+          id: draft.id,
+          name: draft.name,
+          command: draft.command,
+          description: draft.description,
+          group: draft.group,
+        },
+      });
+      setDraft(null);
+      await reload(query);
+    } catch (err) {
+      setFormError(fromUnknown(err).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await call<boolean>("snippet_delete", { id });
+      setDeleting(null);
+      await reload(query);
+    } catch (err) {
+      setError(fromUnknown(err).message);
+    }
+  };
+
   return (
     <aside className="snip">
       <div className="snip__head">
         <span>命令片段</span>
+        <span className="snip__head-spacer" />
+        <button
+          type="button"
+          className="snip__new"
+          onClick={openCreate}
+          title="新建片段（部署命令可以存成一条）"
+        >
+          + 新建
+        </button>
         <button
           type="button"
           className="snip__close"
@@ -113,9 +224,72 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
+          if (event.key === "Escape") {
+            if (draft) setDraft(null);
+            else onClose();
+          }
         }}
       />
+
+      {draft ? (
+        <div className="snip__form">
+          <input
+            className="input snip__form-input"
+            placeholder="名称，如「部署 web」"
+            value={draft.name}
+            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+            autoFocus
+          />
+          <input
+            className="input snip__form-input"
+            placeholder="分组，如「web 项目」（留空为「我的片段」）"
+            value={draft.group}
+            onChange={(event) => setDraft({ ...draft, group: event.target.value })}
+          />
+          <textarea
+            className="input snip__form-input snip__form-cmd"
+            placeholder="cd /opt/web && git pull && npm ci && npm run build"
+            rows={3}
+            value={draft.command}
+            onChange={(event) => setDraft({ ...draft, command: event.target.value })}
+          />
+          <input
+            className="input snip__form-input"
+            placeholder="说明（可选）"
+            value={draft.description}
+            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+
+          <p className="snip__form-hint">
+            多步命令用 <code>&&</code> 连接成一行。不能换行 —— 终端会把换行当回车逐行执行。
+          </p>
+
+          {formError ? <p className="snip__error">{formError}</p> : null}
+
+          <div className="snip__form-foot">
+            <span className={`snip__form-risk is-${draftRisk}`}>
+              {RISK_LABEL[draftRisk]}
+            </span>
+            <span className="snip__head-spacer" />
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={() => setDraft(null)}
+              disabled={saving}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm btn--primary"
+              onClick={() => void save()}
+              disabled={saving}
+            >
+              {saving ? "保存中…" : "保存"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {error ? <p className="snip__error">{error}</p> : null}
 
@@ -178,34 +352,74 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
                   ) : null}
 
                   <ul className="snip__items">
-                  {rows.map((item) => (
-                    <li key={item.id} className="snip__item">
-                      <button
-                        type="button"
-                        className={`snip__insert is-${item.risk}`}
-                        title={item.description}
-                        onClick={() => void insert(item)}
-                      >
-                        <span className="snip__name">
-                          {item.name}
-                          {item.risk === "critical" ? (
-                            <span className="snip__risk is-critical">高危</span>
-                          ) : null}
-                        </span>
-                        <code className="snip__cmd">{item.command}</code>
-                      </button>
-
-                      {item.diag ? (
+                    {rows.map((item) => (
+                      <li key={item.id} className="snip__item">
                         <button
                           type="button"
-                          className="snip__view"
-                          title="用表格查看（不占用终端）"
-                          onClick={() => onView(item.diag as DiagKind, item.name)}
+                          className={`snip__insert is-${item.risk}`}
+                          title={item.description}
+                          onClick={() => void insert(item)}
                         >
-                          表格
+                          <span className="snip__name">
+                            {item.name}
+                            {item.risk === "critical" ? (
+                              <span className="snip__risk is-critical">高危</span>
+                            ) : null}
+                          </span>
+                          <code className="snip__cmd">{item.command}</code>
                         </button>
-                      ) : null}
-                    </li>
+
+                        {item.diag ? (
+                          <button
+                            type="button"
+                            className="snip__view"
+                            title="用表格查看（不占用终端）"
+                            onClick={() => onView(item.diag as DiagKind, item.name)}
+                          >
+                            表格
+                          </button>
+                        ) : null}
+
+                        {!item.builtin ? (
+                          deleting === item.id ? (
+                            <span className="snip__confirm">
+                              <button
+                                type="button"
+                                className="snip__icon-btn is-danger"
+                                onClick={() => void remove(item.id)}
+                              >
+                                删
+                              </button>
+                              <button
+                                type="button"
+                                className="snip__icon-btn"
+                                onClick={() => setDeleting(null)}
+                              >
+                                取消
+                              </button>
+                            </span>
+                          ) : (
+                            <span className="snip__edit">
+                              <button
+                                type="button"
+                                className="snip__icon-btn"
+                                title="编辑"
+                                onClick={() => openEdit(item)}
+                              >
+                                改
+                              </button>
+                              <button
+                                type="button"
+                                className="snip__icon-btn"
+                                title="删除"
+                                onClick={() => setDeleting(item.id)}
+                              >
+                                删
+                              </button>
+                            </span>
+                          )
+                        ) : null}
+                      </li>
                     ))}
                   </ul>
                 </>

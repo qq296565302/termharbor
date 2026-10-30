@@ -632,6 +632,16 @@ export default function TerminalPage() {
         >
           + 新连接
         </button>
+
+        {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
+        <button
+          type="button"
+          className={`term-tabs__new ${snippetOpen ? "is-active" : ""}`}
+          title="命令片段（Ctrl+Shift+P）"
+          onClick={() => setSnippetOpen((open) => !open)}
+        >
+          片段
+        </button>
       </div>
 
       {showPicker ? (
