@@ -140,12 +140,19 @@ export TERMHARBOR_KEY_PROVIDER=devfile
 
 ## M6 已落地的东西（命令片段 · 只读库）
 
-- **14 条内置只读诊断命令**，分 5 组：系统（`uname -a` / `/etc/os-release` / `uptime`）、资源（`free -h` / `df -h` / `df -i` / `du -sh ./*`）、
-  进程（CPU/内存 Top20、进程树）、网络（`ss -tulnp` / `ss -s` / `lsof -i`）、日志（`journalctl -n 100`）。
+- **22 条内置命令，分 6 组**：
+  - **只读诊断 15 条** —— 系统（`uname -a` / `/etc/os-release` / `uptime` / 运行时版本检查）、
+    资源（`free -h` / `df -h` / `df -i` / `du -sh ./*`）、进程（CPU/内存 Top、进程树）、
+    网络（`ss -tulnp` / `ss -s` / `lsof -i`）、日志（`journalctl`）
+  - **环境准备 7 条**（有副作用）—— 包索引更新、常用工具、Python3+pip+venv、
+    Node.js 20（NodeSource）、Docker、编译工具链、Nginx
 - **终端右侧侧栏**：`Ctrl+Shift+P` 开关，搜索覆盖名称/命令/描述/分组，分组可折叠，点一下插入光标处。
 - **插入不执行**（A-12）：只 `session_write` 文本，绝不追加 `\r`，是否执行由用户按回车决定。
-- **风险由 Rust 现算**（SEC-SN-10）：`classify_risk` 与展示用同一个函数，标注与判定不可能不一致；
-  测试逐条校验内置库**全部为只读**，谁加进一条 `rm`/`kill` 都会被拦下。
+- **风险由 Rust 现算**（SEC-SN-10）：`classify_risk` 与展示用同一个函数，标注与判定不可能不一致。
+  测试按分组建模，两个方向都守：**诊断类必须只读**（误判危险会造成警惕疲劳），
+  **环境准备类必须非只读**（漏判会让人以为只是看看，按回车就改了系统）。
+- **装环境的三档**：`apt-get install` 之类 → 危险；`curl … | sh`、`apt-get upgrade` → 高危
+  （前者等于把执行权交给网络对面，后者可能换内核）。高危命令插入后会明确提示「还没运行」。
 - **内置库不进数据库**：内置命令是程序的一部分（同快捷键表），升级自然生效，不需要 seed/合并。
   `snippets` 表留给 M7 的用户自定义片段。
 
