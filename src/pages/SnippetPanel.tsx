@@ -6,7 +6,7 @@ import type { DiagKind, SnippetDto } from "../lib/types";
 
 interface Props {
   /** 拿到渲染好的命令文本。插入由父组件负责 —— 它才知道当前活跃会话是谁。 */
-  onInsert: (command: string) => void;
+  onInsert: (command: string, snippet: SnippetDto) => void;
   /** 有诊断类型的片段可以用表格查看，父组件负责取数 */
   onView: (kind: DiagKind, title: string) => void;
   onClose: () => void;
@@ -61,7 +61,7 @@ export default function SnippetPanel({ onInsert, onView, onClose }: Props) {
     try {
       // 渲染与校验留在 Rust（A-11）：前端不拼命令字符串
       const command = await call<string>("snippet_render", { id: snippet.id });
-      onInsert(command);
+      onInsert(command, snippet);
     } catch (err) {
       setError(fromUnknown(err).message);
     }

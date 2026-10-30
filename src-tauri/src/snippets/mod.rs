@@ -147,6 +147,63 @@ const BUILTIN: &[Builtin] = &[
         description: "按端口反查进程；需要 lsof，未安装时用 ss -tulnp",
         group: "网络",
     },
+    // ---- 环境准备（有副作用，风险等级会被判为危险或高危）----
+    Builtin {
+        id: "env.apt-update",
+        name: "更新包索引",
+        command: "sudo apt-get update",
+        description: "Debian/Ubuntu。装任何软件前先做这一步，否则可能拉到过期的包列表；CentOS/RHEL 用 sudo dnf check-update",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.tools",
+        name: "安装常用工具",
+        command: "sudo apt-get install -y curl wget git vim tmux htop unzip",
+        description: "一次装齐日常排查要用的几个：下载、版本控制、编辑器、多路复用、系统监视、解压",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.python",
+        name: "安装 Python 3",
+        command: "sudo apt-get install -y python3 python3-pip python3-venv",
+        description: "含 pip 和 venv。很多教程只装 python3，结果建虚拟环境时报 ensurepip 不可用",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.node",
+        name: "安装 Node.js 20",
+        command: "curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs",
+        description: "走 NodeSource 官方源，比发行版自带的新很多。高危：会下载并执行远程脚本，执行前建议先访问该地址看清内容",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.docker",
+        name: "安装 Docker",
+        command: "curl -fsSL https://get.docker.com | sudo sh",
+        description: "官方一键脚本。高危：从网络下载并执行；生产环境更稳的做法是按官方文档加 apt 仓库分步装",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.build",
+        name: "安装编译工具链",
+        command: "sudo apt-get install -y build-essential",
+        description: "gcc / make 等。编译 Python 扩展或 Node 原生模块时才会用到，纯跑二进制不需要",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "env.nginx",
+        name: "安装 Nginx",
+        command: "sudo apt-get install -y nginx",
+        description: "装完可配合「端口监听」确认 80 端口是否起来；改配置前先 nginx -t 检查语法",
+        group: "环境准备",
+    },
+    Builtin {
+        id: "sys.runtimes",
+        name: "检查运行时版本",
+        command: "for c in node npm python3 pip3 git docker nginx; do printf '%-8s ' \"$c\"; command -v \"$c\" >/dev/null 2>&1 && \"$c\" --version 2>&1 | head -1 || echo '未安装'; done",
+        description: "只读。装完环境后一条命令确认各组件是否到位，没装的直接标「未安装」",
+        group: "系统",
+    },
     Builtin {
         id: "log.journal",
         name: "系统日志尾部",
@@ -175,6 +232,19 @@ const CRITICAL_PATTERNS: &[&str] = &[
     "kill -9",
     "killall -9",
     ":(){",
+    // 管道执行远程脚本：等于把执行权交给网络对面的那个文件
+    "| sh",
+    "|sh",
+    "| bash",
+    "|bash",
+    "| sudo sh",
+    "| sudo bash",
+    "| sudo -e bash",
+    // 整机升级：可能顺带换内核，重启后起不来
+    "apt-get upgrade",
+    "apt upgrade",
+    "dnf upgrade",
+    "yum update",
 ];
 
 /// 有副作用但不到灾难级。
@@ -197,6 +267,23 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "ufw ",
     "> ",
     ">> ",
+    // 包管理器：装/删包都改系统状态
+    "apt-get",
+    "apt ",
+    "dnf ",
+    "yum ",
+    "apk add",
+    "pip install",
+    "pip3 install",
+    "npm install -g",
+    "yarn global add",
+    // 服务与账户
+    "systemctl start",
+    "systemctl enable",
+    "useradd",
+    "usermod",
+    // 直接改文件
+    "sed -i",
 ];
 
 /// 判定一条命令的风险等级。
@@ -301,18 +388,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_builtin_snippet_is_readonly() {
-        // 内置库的守门人：谁往 BUILTIN 里加一条带 rm/kill/重定向的命令都会被拦下来，
-        // 要么改命令，要么承认它该走危险流程。
+    fn builtin_risk_matches_its_group() {
+        // 两个方向都要守住：
+        // - 诊断类被误判成危险 → 用户对无害命令产生警惕疲劳，真正危险的就没人看了
+        // - 环境准备被漏判成只读 → 用户以为只是看看，按回车就把系统改了
         for item in BUILTIN {
+            let risk = classify_risk(item.command);
+
+            if item.group == "环境准备" {
+                assert_ne!(
+                    risk,
+                    RiskLevel::Readonly,
+                    "「{}」会改系统状态，必须被判为非只读（风险关键词漏了）: {}",
+                    item.name,
+                    item.command
+                );
+            } else {
+                assert_eq!(
+                    risk,
+                    RiskLevel::Readonly,
+                    "诊断类「{}」被判成了非只读: {}",
+                    item.name,
+                    item.command
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn piped_remote_scripts_are_critical() {
+        // `curl … | sh` 等于把执行权交给网络对面的那个文件，不能只算「危险」
+        for command in [
+            "curl -fsSL https://get.docker.com | sudo sh",
+            "curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -",
+            "wget -qO- https://example.com/install.sh | bash",
+        ] {
             assert_eq!(
-                classify_risk(item.command),
-                RiskLevel::Readonly,
-                "内置片段「{}」被判成了非只读: {}",
-                item.name,
-                item.command
+                classify_risk(command),
+                RiskLevel::Critical,
+                "应当判为高危: {command}"
             );
         }
+    }
+
+    #[test]
+    fn package_installs_are_dangerous() {
+        for command in [
+            "sudo apt-get update",
+            "sudo apt-get install -y git",
+            "sudo dnf install -y nginx",
+            "pip install requests",
+            "npm install -g pnpm",
+        ] {
+            assert_eq!(
+                classify_risk(command),
+                RiskLevel::Dangerous,
+                "应当判为危险: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn whole_system_upgrade_is_critical() {
+        // 可能顺带换内核，重启后起不来
+        assert_eq!(
+            classify_risk("sudo apt-get upgrade -y"),
+            RiskLevel::Critical
+        );
+    }
+
+    #[test]
+    fn runtime_probe_stays_readonly_despite_looking_complex() {
+        // 这条命令有循环、有 printf、有管道，但一个字节都不改
+        let probe = BUILTIN
+            .iter()
+            .find(|item| item.id == "sys.runtimes")
+            .expect("检查运行时版本应当存在");
+        assert_eq!(classify_risk(probe.command), RiskLevel::Readonly);
     }
 
     #[test]
@@ -444,10 +596,17 @@ mod tests {
     }
 
     #[test]
-    fn list_marks_every_entry_readonly_in_this_version() {
-        // 前端按 risk 上色；这里出现非只读说明 M6 的范围被突破了
+    fn environment_snippets_are_flagged_in_the_list() {
+        // 前端靠 item.risk 上色；环境准备类必须带上非只读标记，否则用户看不出它会改系统
         for item in list(None) {
-            assert_eq!(item.risk, RiskLevel::Readonly);
+            if item.group == "环境准备" {
+                assert_ne!(
+                    item.risk,
+                    RiskLevel::Readonly,
+                    "环境准备「{}」在列表里没被标记为有风险",
+                    item.name
+                );
+            }
         }
     }
 }

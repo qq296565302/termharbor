@@ -9,6 +9,10 @@ import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
 import { nextTabId } from "../lib/tabs";
 import SnippetPanel from "./SnippetPanel";
+import type { SnippetDto } from "../lib/types";
+
+/** 插入时只关心名称和风险，不需要整条片段 */
+type SnippetMeta = Pick<SnippetDto, "name" | "risk">;
 import type {
   ConnectionDto,
   DiagKind,
@@ -368,7 +372,7 @@ export default function TerminalPage() {
    * 只写文本、不追加回车（A-12）。`sessionId` 从 store 里取，
    * 因为终端实例在子组件内部，父组件只通过 store 知道当前会话。
    */
-  const insertSnippet = (command: string) => {
+  const insertSnippet = (command: string, snippet: SnippetMeta) => {
     const store = useSessionStore.getState();
     const tab = store.tabs.find((item) => item.tabId === store.activeTabId);
 
@@ -377,7 +381,17 @@ export default function TerminalPage() {
       return;
     }
 
-    setSnippetNotice(null);
+    // 有副作用的命令要明确告诉用户「还没执行」—— 标签上的颜色容易被忽略
+    if (snippet.risk === "critical") {
+      setSnippetNotice(
+        `已插入高危命令「${snippet.name}」。它还没运行，请先核对内容再按回车。`,
+      );
+    } else if (snippet.risk === "dangerous") {
+      setSnippetNotice(`已插入「${snippet.name}」，按回车执行。`);
+    } else {
+      setSnippetNotice(null);
+    }
+
     void call("session_write", { sessionId: tab.sessionId, data: command }).catch((err) => {
       setSnippetNotice(fromUnknown(err).message);
     });
