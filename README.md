@@ -144,8 +144,11 @@ export TERMHARBOR_KEY_PROVIDER=devfile
   - **只读诊断 15 条** —— 系统（`uname -a` / `/etc/os-release` / `uptime` / 运行时版本检查）、
     资源（`free -h` / `df -h` / `df -i` / `du -sh ./*`）、进程（CPU/内存 Top、进程树）、
     网络（`ss -tulnp` / `ss -s` / `lsof -i`）、日志（`journalctl`）
-  - **环境准备 7 条**（有副作用）—— 包索引更新、常用工具、Python3+pip+venv、
-    Node.js 20（NodeSource）、Docker、编译工具链、Nginx
+  - **环境准备 14 条**（有副作用）—— 按组件排列，同一组件的安装/卸载相邻：
+    包索引、Git、Python3+pip+venv、Node.js 20、Docker、Nginx、常用工具、编译工具链
+  - **环境探测**：打开侧栏时自动跑一次 `command -v` + `--version`，
+    在「环境准备」组顶部显示 chips —— 绿点=已装（带版本），虚线圈=未装。
+    这样才知道**该点哪条安装命令**，而不是点开一堆命令自己找
 - **终端右侧侧栏**：`Ctrl+Shift+P` 开关，搜索覆盖名称/命令/描述/分组，分组可折叠，点一下插入光标处。
 - **插入不执行**（A-12）：只 `session_write` 文本，绝不追加 `\r`，是否执行由用户按回车决定。
 - **风险由 Rust 现算**（SEC-SN-10）：`classify_risk` 与展示用同一个函数，标注与判定不可能不一致。
@@ -153,6 +156,8 @@ export TERMHARBOR_KEY_PROVIDER=devfile
   **环境准备类必须非只读**（漏判会让人以为只是看看，按回车就改了系统）。
 - **装环境的三档**：`apt-get install` 之类 → 危险；`curl … | sh`、`apt-get upgrade` → 高危
   （前者等于把执行权交给网络对面，后者可能换内核）。高危命令插入后会明确提示「还没运行」。
+- **卸载一律 `--purge`**，description 里写清会带走什么（Nginx 的站点配置、Docker 的镜像数据、
+  npm 的全局包）。**唯独不提供 Python 3 的卸载** —— 它是系统组件，purge 会连带拆掉依赖它的系统包。
 - **内置库不进数据库**：内置命令是程序的一部分（同快捷键表），升级自然生效，不需要 seed/合并。
   `snippets` 表留给 M7 的用户自定义片段。
 
