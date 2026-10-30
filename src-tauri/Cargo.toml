@@ -1,0 +1,52 @@
+[package]
+name = "termharbor"
+version = "0.1.0"
+description = "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理客户端"
+authors = ["TermHarbor"]
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+name = "termharbor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+# 系统钥匙串。Linux 上走 Secret Service，CI 里可用 --no-default-features 关掉。
+keyring = { version = "3", features = [
+  "apple-native",
+  "windows-native",
+  "sync-secret-service",
+], optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+russh = "0.65"
+aws-lc-rs = { version = "1.19.0", features = ["prebuilt-nasm"] }
+uuid = { version = "1.20.0", features = ["v7"] }
+tauri-plugin-dialog = "2.7.3"
+russh-sftp = "3.0.1"
+tokio-util = { version = "0.7.19", features = ["rt"] }
+
+[features]
+default = ["keychain"]
+keychain = ["dep:keyring"]
+
+[profile.release]
+# 为「安装包 < 20MB」服务
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
+strip = true

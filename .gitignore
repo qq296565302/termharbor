@@ -1,0 +1,22 @@
+# 依赖与构建产物
+node_modules/
+dist/
+target/
+src-tauri/target/
+
+# 本地配置与运行时数据
+*.db
+*.db-shm
+*.db-wal
+dev_key.hex
+
+# 工具本地状态
+.workbuddy/
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.iml

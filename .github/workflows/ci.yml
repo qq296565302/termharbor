@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  frontend:
+    name: 前端 · 类型检查与单测
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm check
+
+      - name: 单元测试
+        run: pnpm test
+
+      - name: 构建产物
+        run: pnpm build
+
+  rust:
+    name: Rust · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 系统依赖
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libdbus-1-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 格式检查
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Clippy
+        # await_holding_lock 本来就在 clippy 默认的 warn 组里，这里显式再列一次：
+        # 一是防止 clippy 以后调整默认组时这条约束悄悄失效，
+        # 二是把「为什么」留在配置旁边 —— sftp 测试服务端的桥接必须在 data() 回调里
+        # 用 mpsc 转交数据；一旦有人改成直接拿 std MutexGuard 跨 await，
+        # handler future 就不再是 Send，编译能过但运行时会以难以定位的方式失败。
+        run: >-
+          cargo clippy --manifest-path src-tauri/Cargo.toml
+          --all-targets -- -D warnings -W clippy::await_holding_lock
+
+      # 单元测试走开发期文件密钥，避开 CI 上没有 Secret Service 的问题
+      - name: 单元测试
+        env:
+          TERMHARBOR_KEY_PROVIDER: devfile
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  bundle:
+    name: 打包冒烟 · ${{ matrix.os }}
+    needs: [frontend, rust]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 系统依赖
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 构建安装包
+        run: pnpm tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termharbor-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/
+          if-no-files-found: warn
