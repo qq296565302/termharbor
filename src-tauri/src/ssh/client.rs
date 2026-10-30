@@ -3,6 +3,7 @@
 //! 不建 shell、不开 PTY —— 「测试连接」按钮要能在 2 秒内给出答案。
 //! 也不保存任何会话状态，真正的会话管理在 M2。
 
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -58,13 +59,37 @@ pub(crate) fn config_for(purpose: Purpose, legacy_algorithms: bool) -> client::C
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ProbeAuth {
     Password(String),
     PrivateKey {
         path: String,
         passphrase: Option<String>,
     },
+}
+
+/// **手写 Debug，永远不打印凭据。**
+///
+/// 这个类型带着明文密码/口令，而 `ProbeRequest` 派生 Debug、又经常出现在
+/// 「连不上」的排查路径上（`tracing::error!(?request)` 是最自然的写法）。
+/// 派生 Debug 就等于埋一颗地雷：哪天有人顺手打一行日志，密码就进日志文件了。
+///
+/// 现在这条路被从类型上堵死：`{:?}` 只会得到 `Password(***)`。
+/// 真实密钥材料的查看只能在 `establish` 内部按需取用。
+impl fmt::Debug for ProbeAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProbeAuth::Password(_) => f.write_str("Password(***)"),
+            ProbeAuth::PrivateKey { path, passphrase } => f
+                .debug_struct("PrivateKey")
+                .field("path", path)
+                .field(
+                    "passphrase",
+                    &if passphrase.is_some() { "***" } else { "none" },
+                )
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -313,6 +338,51 @@ fn map_connect_error(err: &russh::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 凭据绝不能出现在 Debug 输出里。
+    ///
+    /// 这条守的是一个具体的翻车方式：`ProbeRequest` 在排查"连不上"时最自然的写法就是
+    /// `tracing::error!(?request)`，而它带着明文密码 —— 派生 Debug 就把密码送进了日志文件。
+    #[test]
+    fn debug_output_never_contains_credentials() {
+        let request = ProbeRequest {
+            host: "10.0.0.1".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            auth: ProbeAuth::Password("S3cr3t-Passw0rd".to_string()),
+            legacy_algorithms: false,
+            known_fingerprint: None,
+            trust_fingerprint: None,
+        };
+
+        let rendered = format!("{request:?}");
+        assert!(
+            !rendered.contains("S3cr3t-Passw0rd"),
+            "密码泄漏进了 Debug: {rendered}"
+        );
+        assert!(rendered.contains("***"), "该看到打码: {rendered}");
+        // 非敏感字段要保留，否则排查问题时什么都看不到
+        assert!(rendered.contains("10.0.0.1"));
+        assert!(rendered.contains("root"));
+
+        let key = ProbeAuth::PrivateKey {
+            path: "/home/u/.ssh/id_ed25519".to_string(),
+            passphrase: Some("key-Passw0rd".to_string()),
+        };
+        let rendered = format!("{key:?}");
+        assert!(!rendered.contains("key-Passw0rd"), "口令泄漏: {rendered}");
+        assert!(rendered.contains("/home/u/.ssh/id_ed25519"), "路径要留着");
+    }
+
+    #[test]
+    fn debug_marks_missing_passphrase_explicitly() {
+        // 没有口令时显示 none，而不是 *** —— 否则排查时会误以为设了口令
+        let key = ProbeAuth::PrivateKey {
+            path: "/k".to_string(),
+            passphrase: None,
+        };
+        assert!(format!("{key:?}").contains("none"));
+    }
     use crate::error::ErrCode;
     use crate::ssh::test_support::{spawn, HostKey};
 

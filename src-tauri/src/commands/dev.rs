@@ -24,6 +24,13 @@ pub struct ImeEcho {
 /// 丢字/替换符这类问题会在传输前就被掩盖掉。hex 能保住原始字节。
 #[tauri::command]
 pub fn ime_echo(data_hex: String) -> AppResult<ImeEcho> {
+    // 正式构建里直接关掉。这个 command 在 `generate_handler!` 里是静态注册的，
+    // 想按 cfg 摘掉就得复制一份 handler 列表（两边迟早不同步，风险更大），
+    // 所以改成运行时拒绝：生产包不留任何调试用的 IPC 入口。
+    if !cfg!(debug_assertions) {
+        return Err(AppError::validation("该命令仅在开发构建中可用"));
+    }
+
     let bytes = crate::crypto::hex_decode(&data_hex)
         .ok_or_else(|| AppError::validation("data_hex 不是合法的十六进制串"))?;
 

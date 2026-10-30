@@ -2,7 +2,7 @@
 
 use russh_sftp::client::SftpSession;
 
-use super::list::join_path;
+use super::list::{is_windows_drive_root, join_path};
 use super::map_error;
 use crate::error::{AppError, AppResult, ErrCode};
 
@@ -38,6 +38,13 @@ pub async fn stat(session: &SftpSession, path: &str) -> AppResult<Option<(bool, 
 /// `recursive` 必须由调用方显式传 true —— 删除目录树是破坏性操作，
 /// 需求 F-07 要求前端二次确认，后端不给「自动判断要不要递归」的便利。
 pub async fn remove(session: &SftpSession, path: &str, recursive: bool) -> AppResult<()> {
+    // 拒绝删除根：`remove("/", true)` 会从根开始递归删掉整台机器。
+    // 前端点不出来（列表里只有子项），但 IPC 是能被直接调用的，
+    // 一条命令的代价太大，必须在这一层挡住。
+    if is_root_like(path) {
+        return Err(AppError::validation("拒绝对根目录执行删除"));
+    }
+
     // 用 lstat 而不是 stat：符号链接要删链接本身，不能跟着进目标目录
     let meta = session.symlink_metadata(path).await.map_err(map_error)?;
 
@@ -51,6 +58,20 @@ pub async fn remove(session: &SftpSession, path: &str, recursive: bool) -> AppRe
     }
 
     remove_tree(session, path, 0).await
+}
+
+/// 根目录、当前目录、盘符根 —— 这些都不是「某个文件夹」，删它们等于删整机。
+fn is_root_like(path: &str) -> bool {
+    let trimmed = path.trim();
+    let trimmed = trimmed.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return true;
+    }
+    if trimmed == "/" {
+        return true;
+    }
+    // Windows 的 OpenSSH 把盘符映射成 /C:
+    is_windows_drive_root(trimmed)
 }
 
 /// 深度优先删除。先清子项再删自己，否则 rmdir 会因目录非空失败。
@@ -87,4 +108,25 @@ fn remove_tree<'a>(
 
         session.remove_dir(path).await.map_err(map_error)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_root_like;
+
+    #[test]
+    fn root_like_paths_are_refused() {
+        // 这些都不是「某个文件夹」，递归删掉等于删整机。
+        // 前端点不出来（列表里只有子项），但 IPC 能被直接调用。
+        for path in ["/", "//", "/C:", "/c:/", ".", "..", "", "   "] {
+            assert!(is_root_like(path), "应当拒绝: {path:?}");
+        }
+    }
+
+    #[test]
+    fn normal_paths_are_still_allowed() {
+        for path in ["/tmp", "/var/log", "/home/user", "/C:/Users"] {
+            assert!(!is_root_like(path), "不该误伤: {path}");
+        }
+    }
 }

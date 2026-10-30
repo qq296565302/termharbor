@@ -3,6 +3,8 @@
 //! 这一层只做三件事：校验输入、加解密、把领域调用串起来（需求 4.4）。
 //! 明文密码只在这个文件的作用域里短暂存在，绝不写日志、绝不回传前端。
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -54,7 +56,7 @@ impl From<&ConnectionRecord> for ConnectionDto {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInput {
     pub name: String,
@@ -71,6 +73,30 @@ pub struct ConnectionInput {
     pub key_passphrase: Option<String>,
     #[serde(default)]
     pub legacy_algorithms: bool,
+}
+
+/// **手写 Debug，不打印密码与口令。**
+///
+/// 这个结构体直接从 IPC 反序列化而来，里面是明文凭据；派生 Debug 之后，
+/// 任何一句 `tracing::debug!(?input)` 都会把它们写进日志文件。
+/// 其余字段照常输出 —— 排查"字段填错了"也要用得上。
+impl fmt::Debug for ConnectionInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectionInput")
+            .field("name", &self.name)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_type", &self.auth_type)
+            .field("password", &self.password.as_ref().map(|_| "***"))
+            .field("key_path", &self.key_path)
+            .field(
+                "key_passphrase",
+                &self.key_passphrase.as_ref().map(|_| "***"),
+            )
+            .field("legacy_algorithms", &self.legacy_algorithms)
+            .finish()
+    }
 }
 
 /// 敏感字段的更新语义。
@@ -617,5 +643,30 @@ mod tests {
         assert!(dto.has_password);
         assert!(!json.contains("secret_blob"));
         assert!(!json.contains("[1,2,3]"));
+    }
+
+    /// `ConnectionInput` 里是明文密码，Debug 必须打码。
+    #[test]
+    fn connection_input_debug_hides_secrets() {
+        let input = ConnectionInput {
+            name: "生产".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            auth_type: "password".to_string(),
+            password: Some("S3cr3t-Passw0rd".to_string()),
+            key_path: Some("/home/u/.ssh/id_ed25519".to_string()),
+            key_passphrase: Some("key-Passw0rd".to_string()),
+            legacy_algorithms: false,
+        };
+
+        let rendered = format!("{input:?}");
+        assert!(
+            !rendered.contains("S3cr3t-Passw0rd"),
+            "密码泄漏: {rendered}"
+        );
+        assert!(!rendered.contains("key-Passw0rd"), "口令泄漏: {rendered}");
+        assert!(rendered.contains("10.0.0.1"), "排查要用的字段得留着");
+        assert!(rendered.contains("/home/u/.ssh/id_ed25519"));
     }
 }

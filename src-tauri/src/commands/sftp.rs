@@ -196,7 +196,13 @@ pub async fn sftp_upload(
     let emit = progress_emitter(app, session_id.clone());
     let tid = transfer_id.clone();
 
+    // 应用自己的数据目录：库里是加密凭据、指纹库里是主机指纹，
+    // 一律不许当上传源 —— local_path 是 IPC 参数，不能假设来自文件对话框。
+    let data_dir = state.paths.data_dir.clone();
+    let backup_dir = state.paths.backup_dir.clone();
+
     tauri::async_runtime::spawn(async move {
+        let protected: [&std::path::Path; 2] = [&data_dir, &backup_dir];
         let result = transfer::upload(
             &conn.session,
             &local,
@@ -204,6 +210,7 @@ pub async fn sftp_upload(
             tid.clone(),
             token,
             emit,
+            &protected,
         )
         .await;
         transfers.finish(&tid);

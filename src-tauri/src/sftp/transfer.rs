@@ -210,7 +210,10 @@ pub async fn upload(
     transfer_id: String,
     cancel: CancellationToken,
     emit: ProgressFn,
+    protected: &[&Path],
 ) -> AppResult<u64> {
+    // 源路径检查放在这里而不是命令层：任何调用方都绕不过去
+    ensure_upload_source(local, protected)?;
     let name = file_name_of(remote_path);
     let mut meter = Meter::new(transfer_id, TransferDirection::Upload, name, 0, emit);
 
@@ -443,18 +446,82 @@ async fn validate_local_read(path: &Path) -> AppResult<()> {
 ///
 /// 前端已经用系统保存对话框限定过一遍，这里是第二道闸：不信任前端传来的任意路径。
 fn validate_local_write(path: &Path) -> AppResult<()> {
+    let resolved = resolve_local_target(path)?;
+
+    if is_system_dir(&resolved) {
+        return Err(AppError::validation("不允许写入系统目录"));
+    }
+
+    Ok(())
+}
+
+/// 把「父目录 + 文件名」解析成真实路径。
+///
+/// **不能直接拿原始字符串做前缀判断**：`/home/u/../../etc/passwd` 并不以 `/etc` 开头，
+/// 但确实会写到 /etc 里；父目录是符号链接（`/home/u/link -> /etc`）时同理。
+/// 所以先 canonicalize 父目录，把 `..` 和符号链接都解开，再拿真实路径去比对。
+fn resolve_local_target(path: &Path) -> AppResult<PathBuf> {
     if !path.is_absolute() {
         return Err(AppError::validation("本地路径必须是绝对路径"));
     }
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(AppError::validation("目标目录不存在"));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| AppError::validation("本地路径缺少文件名"))?;
+
+    let parent = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let real_parent =
+        std::fs::canonicalize(parent).map_err(|_| AppError::validation("目标目录不存在"))?;
+
+    Ok(strip_verbatim_prefix(real_parent).join(file_name))
+}
+
+/// Windows 的 `canonicalize` 会返回 `\\?\C://...` 这种 verbatim 形式。
+///
+/// 前缀比较是逐组件的，`\\?\C://Windows` 和 `C://Windows` 对不上，
+/// 不剥掉的话系统目录黑名单在 Windows 上会**静默失效**。
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
         }
     }
+    path
+}
 
-    if is_system_dir(path) {
-        return Err(AppError::validation("不允许写入系统目录"));
+/// 上传源路径检查。
+///
+/// `protected` 是应用自己的数据目录（配置库、日志、快照）。**不允许把应用自己的
+/// 数据传出去**：这里有加密后的凭据和主机指纹。`local_path` 是 IPC 参数，
+/// 不能假设它一定来自文件对话框。
+pub fn ensure_upload_source(path: &Path, protected: &[&Path]) -> AppResult<()> {
+    if !path.is_absolute() {
+        return Err(AppError::validation("本地文件路径必须是绝对路径"));
+    }
+
+    let real = std::fs::canonicalize(path)
+        .map_err(|_| AppError::validation("本地文件不存在或无法访问"))?;
+
+    if real.is_dir() {
+        return Err(AppError::validation("暂不支持上传整个目录，请选择单个文件"));
+    }
+
+    for dir in protected {
+        // 目录可能还不存在（比如还没产生过快照），那就没什么可保护的
+        let Ok(real_dir) = std::fs::canonicalize(dir) else {
+            continue;
+        };
+        if real.starts_with(&real_dir) {
+            return Err(AppError::validation(
+                "不允许上传应用自己的数据目录（内含凭据）",
+            ));
+        }
     }
 
     Ok(())
@@ -494,6 +561,94 @@ pub fn remote_join(dir: &str, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 唯一临时目录（与测试基础设施同一约定：不用时间戳后缀）。
+    fn temp_dir(tag: &str) -> PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "termharbor-path-{tag}-{}-{unique}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn download_target_resolves_dotdot_before_system_dir_check() {
+        // 这是原先的一个真实绕过：`<tmp>/a/b/../../x.txt` 字面上不以 /etc 开头，
+        // 但 `..` 会把它带回上级目录。必须先规范化再判断。
+        let dir = temp_dir("dotdot");
+        let deep = dir.join("a").join("b");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        let tricky = deep.join("..").join("..").join("probe.txt");
+        let resolved = resolve_local_target(&tricky).unwrap();
+
+        // 两边都过一遍 strip_verbatim_prefix：Windows 的 canonicalize 带 \\?\ 前缀
+        let expected = strip_verbatim_prefix(std::fs::canonicalize(&dir).unwrap());
+        assert_eq!(
+            resolved.parent().unwrap(),
+            expected,
+            "`..` 必须被解开，否则系统目录黑名单形同虚设"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn download_target_rejects_relative_and_missing_parent() {
+        assert!(resolve_local_target(Path::new("relative.txt")).is_err());
+        let missing = temp_dir("missing").join("nope").join("x.txt");
+        assert!(resolve_local_target(&missing).is_err());
+    }
+
+    #[test]
+    fn upload_source_must_be_absolute() {
+        let dir = temp_dir("relative");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, b"x").unwrap();
+
+        // 相对路径会被解析到应用自己的工作目录 —— 那是能读到库文件的位置
+        assert!(ensure_upload_source(Path::new("a.txt"), &[]).is_err());
+        assert!(ensure_upload_source(&file, &[]).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upload_source_refuses_the_app_data_dir() {
+        let dir = temp_dir("protected");
+        let data_dir = dir.join("appdata");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let db = data_dir.join("termharbor.db");
+        std::fs::write(&db, b"ciphertext").unwrap();
+
+        let err = ensure_upload_source(&db, &[&data_dir]).unwrap_err();
+        assert!(
+            err.message.contains("数据目录") || err.detail.unwrap_or_default().contains("数据目录"),
+            "应当明确拒绝上传应用自己的数据"
+        );
+
+        // 数据目录之外的文件仍然可以上传
+        let outside = dir.join("ok.txt");
+        std::fs::write(&outside, b"x").unwrap();
+        assert!(ensure_upload_source(&outside, &[&data_dir]).is_ok());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn upload_source_refuses_directories_and_missing_files() {
+        let dir = temp_dir("dirs");
+        assert!(
+            ensure_upload_source(&dir, &[]).is_err(),
+            "目录不能当文件上传"
+        );
+        assert!(ensure_upload_source(&dir.join("nope.txt"), &[]).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn part_path_keeps_extension() {

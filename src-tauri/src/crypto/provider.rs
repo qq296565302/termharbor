@@ -113,15 +113,49 @@ impl KeyProvider for DevFileKeyProvider {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| CryptoError::KeyStore(e.to_string()))?;
         }
-        std::fs::write(&self.path, hex_encode(&key))
+        write_key_file(&self.path, &hex_encode(&key))
             .map_err(|e| CryptoError::KeyStore(e.to_string()))?;
-        restrict_permissions(&self.path);
         tracing::warn!(
             path = %self.path.display(),
             "使用开发期文件密钥，密钥以明文存放，切勿用于生产环境"
         );
         Ok(key)
     }
+}
+
+/// 写密钥文件，**创建时就限权**。
+///
+/// 先 `fs::write` 再 `chmod` 有个真实的短窗口：文件以 0644 存在了几微秒，
+/// 同机其他用户此刻是能读到的。改成创建即带 0600（`mode` 只在新建时生效），
+/// 之后那次 chmod 仅用于兜住「文件已存在但权限不对」的情况。
+fn write_key_file(path: &Path, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?
+    };
+
+    #[cfg(not(unix))]
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+
+    let mut file = file;
+    file.write_all(data.as_bytes())?;
+    file.flush()?;
+    drop(file);
+
+    restrict_permissions(path);
+    Ok(())
 }
 
 #[cfg(unix)]

@@ -100,7 +100,7 @@ pub fn parent_path(path: &str) -> Option<String> {
 }
 
 /// 判断 `/C:` / `/c:` 这种盘符根。
-fn is_windows_drive_root(path: &str) -> bool {
+pub(crate) fn is_windows_drive_root(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() == 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':'
 }

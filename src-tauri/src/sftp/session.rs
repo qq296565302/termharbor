@@ -333,6 +333,7 @@ mod tests {
             "t1".to_string(),
             CancellationToken::new(),
             emit,
+            &[],
         )
         .await
         .expect("上传应当成功");
@@ -399,6 +400,7 @@ mod tests {
             "t3".to_string(),
             token,
             emit,
+            &[],
         )
         .await
         .expect_err("取消后应当报错");
@@ -425,6 +427,7 @@ mod tests {
             "t4".to_string(),
             CancellationToken::new(),
             emit,
+            &[],
         )
         .await
         .expect_err("目录不存在应当失败");
