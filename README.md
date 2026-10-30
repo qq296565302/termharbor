@@ -184,13 +184,28 @@ systemd
 - 越界值静默 clamp（拖到边界外、或手改库），不弹错误
 - 终端**就地更新**而不重建，切换字号/主题不会丢回滚缓冲
 
+## 打包
+
+```bash
+pnpm tauri build --bundles nsis   # Windows 安装包，约 3 分钟（增量）
+```
+
+产物：`src-tauri/target/release/bundle/nsis/TermHarbor_0.1.0_x64-setup.exe`，**2.89 MiB**。
+
+体积是靠 release profile 压下来的：`lto = "fat"` + `codegen-units = 1` + `opt-level = "s"` + `strip = true`。
+首次打包会自动下载 NSIS 到 `%LOCALAPPDATA%\tauri\NSIS`。
+
+没装 WebView2 的机器不用管：`webviewInstallMode` 设的是 `downloadBootstrapper`，安装器会自己拉。
+
+> 注意：Windows 未签名，SmartScreen 会提示"未知发布者"，需要点「更多信息 → 仍要运行」。
+
 ## 下一步
 
-M3、M6（只读片段库）、诊断面板已完成。剩下：
+M3、M6、诊断面板、设置页、关于页已完成，Windows 安装包能出。剩下：
 
 - **M4 监控、设置与打磨**：`/proc` 只读采集、设置页（字体/字号/主题/回滚行数）、关于页、错误文案全覆盖
 - **M7 自定义片段**：新建/编辑/删除、变量占位符 `{port}`、执行前预览与二次确认
-- **M5 打包发布**：三平台安装包、签名与回归清单
+- **M5 剩余**：macOS dmg / Linux AppImage+deb、代码签名、三平台回归清单
 
 ### Spike 已完成（见 [docs/spike-notes.md](docs/spike-notes.md)）
 
