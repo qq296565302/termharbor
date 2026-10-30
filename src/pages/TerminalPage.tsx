@@ -22,6 +22,7 @@ import type {
   SshStateEvent,
 } from "../lib/types";
 import DiagPanel from "./DiagPanel";
+import FilePanel from "./FilePanel";
 import { TERM_THEMES } from "./SettingsPage";
 import { useSessionStore, type TerminalTab } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -375,6 +376,26 @@ export default function TerminalPage() {
   const [loading, setLoading] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [snippetOpen, setSnippetOpen] = useState(false);
+  /** 右侧文件面板。与命令片段互斥 —— 两个都开窗口就太挤了。 */
+  const [filesOpen, setFilesOpen] = useState(false);
+  /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
+  const [filePanels, setFilePanels] = useState<string[]>([]);
+  /**
+   * 文件面板宽度。
+   *
+   * 左右拖动分隔条改，值存在 localStorage —— 这是纯 UI 偏好，
+   * 没必要进 settings 表（那边是跨设备语义的配置）。
+   */
+  const [filesWidth, setFilesWidth] = useState(() => {
+    try {
+      const saved = Number(globalThis.localStorage?.getItem("termharbor.filesWidth"));
+      if (Number.isFinite(saved) && saved >= 280) return saved;
+    } catch {
+      // 无 localStorage 时用默认值
+    }
+    return 440;
+  });
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   /** 插入片段后 +1，让终端重新拿回焦点 */
   const [focusTick, setFocusTick] = useState(0);
   const [snippetNotice, setSnippetNotice] = useState<string | null>(null);
@@ -424,6 +445,9 @@ export default function TerminalPage() {
    */
   useEffect(() => {
     void call<number>("session_close_all").catch(() => undefined);
+    // 文件面板内嵌进本页后，SFTP 的孤儿清理也归这里：
+    // 整页重载后前端 sessionId 全丢，但后端连接还活着。
+    void call<number>("sftp_close_all").catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -489,6 +513,56 @@ export default function TerminalPage() {
    *
    * 刷新时保留上一次结果（同一种诊断），否则每点一次「刷新」表格都会闪一下消失。
    */
+  /**
+   * 文件面板按标签挂载：当前标签第一次打开面板时才挂，
+   * 之后切走保留挂载（`hidden`），否则每切一次标签都要重连 SFTP。
+   */
+  useEffect(() => {
+    if (!filesOpen || !activeTabId) return;
+    setFilePanels((prev) => (prev.includes(activeTabId) ? prev : [...prev, activeTabId]));
+  }, [filesOpen, activeTabId]);
+
+  // 标签关掉后把它对应的面板一起清掉，否则会留一个没人管的 SFTP 会话
+  useEffect(() => {
+    setFilePanels((prev) => {
+      const alive = prev.filter((id) => tabs.some((tab) => tab.tabId === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [tabs]);
+
+  /**
+   * 拖动分隔条调宽度。
+   *
+   * 上限取「窗口宽度 - 420」：至少要给终端留 420px，否则拖到最宽终端就废了；
+   * 下限 280 保证文件名还看得见。双击分隔条复位。
+   */
+  const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    dragRef.current = { startX: event.clientX, startWidth: filesWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const resizeFiles = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const upper = Math.max(280, Math.min(760, window.innerWidth - 420));
+    const next = Math.min(
+      Math.max(drag.startWidth - (event.clientX - drag.startX), 280),
+      upper,
+    );
+    setFilesWidth(next);
+  };
+
+  const endResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    try {
+      globalThis.localStorage?.setItem("termharbor.filesWidth", String(Math.round(filesWidth)));
+    } catch {
+      // 存不进去只是下次回到默认宽度，不影响使用
+    }
+  };
+
   const openDiag = async (kind: DiagKind, label: string) => {
     const store = useSessionStore.getState();
     const tab = store.tabs.find((item) => item.tabId === store.activeTabId);
@@ -550,6 +624,8 @@ export default function TerminalPage() {
       if (event.shiftKey && event.code === "KeyP") {
         stop();
         setSnippetOpen((open) => !open);
+        // 与按钮行为一致：打开片段时收掉文件面板，否则终端被挤成一条缝
+        setFilesOpen(false);
         return;
       }
 
@@ -638,9 +714,26 @@ export default function TerminalPage() {
           type="button"
           className={`term-tabs__new ${snippetOpen ? "is-active" : ""}`}
           title="命令片段（Ctrl+Shift+P）"
-          onClick={() => setSnippetOpen((open) => !open)}
+          onClick={() => {
+            // 与文件面板互斥：两个侧栏同时开，终端只剩一条缝
+            setSnippetOpen((open) => !open);
+            setFilesOpen(false);
+          }}
         >
           片段
+        </button>
+
+        <button
+          type="button"
+          className={`term-tabs__new ${filesOpen ? "is-active" : ""}`}
+          title="文件（SFTP，跟着当前标签的服务器走）"
+          disabled={!activeTabId}
+          onClick={() => {
+            setFilesOpen((open) => !open);
+            setSnippetOpen(false);
+          }}
+        >
+          文件
         </button>
       </div>
 
@@ -694,6 +787,50 @@ export default function TerminalPage() {
               tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null
             }
           />
+        ) : null}
+
+        {filesOpen ? (
+          <aside className="term-files" style={{ width: filesWidth }}>
+            <div
+              className="term-files__grip"
+              title="拖动调整宽度，双击复位"
+              onPointerDown={startResize}
+              onPointerMove={resizeFiles}
+              onPointerUp={endResize}
+              onPointerCancel={endResize}
+              onDoubleClick={() => setFilesWidth(440)}
+            />
+            <div className="term-files__head">
+              <span className="term-files__title">文件</span>
+              <span className="term-files__host">
+                {tabs.find((tab) => tab.tabId === activeTabId)?.hostLabel ?? ""}
+              </span>
+              <button
+                type="button"
+                className="term-files__close"
+                title="关闭文件面板（SFTP 连接会一起关掉）"
+                onClick={() => setFilesOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="term-files__body">
+              {filePanels.map((tabId) => {
+                const tab = tabs.find((item) => item.tabId === tabId);
+                if (!tab) return null;
+                return (
+                  <div
+                    key={tabId}
+                    className="term-files__slot"
+                    hidden={tabId !== activeTabId}
+                  >
+                    <FilePanel connectionId={tab.connectionId} compact />
+                  </div>
+                );
+              })}
+            </div>
+          </aside>
         ) : null}
       </div>
 

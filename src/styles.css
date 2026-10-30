@@ -1221,43 +1221,15 @@ button {
 
 /* ------------------------------------------------------------ SFTP 文件管理（M3） */
 
-.files-page {
+.file-panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  gap: 8px;
-  padding: 10px 12px 0;
-}
-
-.files-empty {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 620px;
-  margin: 40px auto 0;
-}
-
-.files-empty h2 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.files-empty p {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--text-muted);
-}
-
-.files-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
+  gap: 7px;
+  padding: 8px 10px 0;
+  background: var(--bg);
 }
 
 .files-hint {
@@ -2689,4 +2661,125 @@ button {
 .settings__backup-actions {
   display: flex;
   gap: 4px;
+}
+
+/* ------------------------------------------------------------ 会话页右侧文件面板 */
+
+.term-files {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border-strong);
+  background: var(--bg);
+}
+
+/* 左侧拖拽条：贴边放置，指针一碰就能抓住 */
+.term-files__grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 3;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.term-files__grip:hover {
+  background: var(--accent-soft);
+}
+
+.term-files__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.term-files__title {
+  color: var(--text);
+}
+
+.term-files__host {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-files__close {
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.term-files__close:hover {
+  color: var(--danger);
+}
+
+.term-files__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.term-files__slot {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 面板里的「正在连接 / 重连」占位 */
+.file-panel__status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 4px;
+}
+
+/* ------------------------------------------------------------ 面板紧凑模式 */
+/* 窄面板里 5 列会把文件名挤没，只留「名称 / 大小 / 操作」三列。
+   时间与权限在会话页里不是高频信息，需要时把面板拖宽也不会回来 —— 这是刻意的取舍。 */
+
+.file-panel.is-compact .files-row {
+  grid-template-columns: minmax(0, 1fr) 62px auto;
+  gap: 8px;
+  padding: 3px 6px;
+  min-height: 30px;
+}
+
+.file-panel.is-compact .files-row > :nth-child(3),
+.file-panel.is-compact .files-row > :nth-child(4) {
+  display: none;
+}
+
+.file-panel.is-compact .files-bar {
+  gap: 4px;
+}
+
+.file-panel.is-compact .files-bar .btn {
+  padding: 3px 7px;
+  font-size: 11.5px;
+}
+
+.file-panel.is-compact .files-crumbs {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.file-panel.is-compact .files-transfers {
+  max-height: 120px;
 }

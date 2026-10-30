@@ -1,32 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { useUiStore } from "./uiStore";
+import { resolveSavedPage } from "./uiStore";
 
-describe("connectionsRevision", () => {
-  beforeEach(() => {
-    // 每次归零，避免用例之间互相影响
-    useUiStore.setState({ connectionsRevision: 0 });
+describe("resolveSavedPage", () => {
+  it("老存档里的 files 落到终端页", () => {
+    // 文件页已并进会话页。不清这一条的话，升级后用户会被甩到一张不存在的空白页。
+    expect(resolveSavedPage("files")).toBe("terminal");
   });
 
-  it("每次落库都递增，终端页才有机会被唤醒", () => {
-    const { bumpConnections } = useUiStore.getState();
-
-    expect(useUiStore.getState().connectionsRevision).toBe(0);
-    bumpConnections();
-    expect(useUiStore.getState().connectionsRevision).toBe(1);
-    bumpConnections();
-    expect(useUiStore.getState().connectionsRevision).toBe(2);
+  it("正常页面原样返回", () => {
+    expect(resolveSavedPage("connections")).toBe("connections");
+    expect(resolveSavedPage("terminal")).toBe("terminal");
   });
 
-  it("切页不改变计数，只有数据变更才改变", () => {
-    const { setActivePage, bumpConnections } = useUiStore.getState();
-
-    bumpConnections();
-    const before = useUiStore.getState().connectionsRevision;
-
-    setActivePage("terminal");
-    setActivePage("connections");
-
-    expect(useUiStore.getState().connectionsRevision).toBe(before);
+  it("无法识别的页面名返回 null，由调用方给默认值", () => {
+    expect(resolveSavedPage("nope")).toBeNull();
+    expect(resolveSavedPage("")).toBeNull();
+    expect(resolveSavedPage(null)).toBeNull();
   });
 });

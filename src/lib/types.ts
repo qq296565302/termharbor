@@ -131,6 +131,8 @@ export interface RemoteStat {
 
 /** `sftp:progress` 事件载荷，对应 `sftp::transfer::TransferProgress` */
 export interface TransferProgress {
+  /** 所属 SFTP 会话。多个文件面板同时监听，靠它区分进度归属 */
+  sessionId: string;
   transferId: string;
   direction: "upload" | "download";
   name: string;

@@ -5,13 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fromUnknown } from "../lib/errors";
 import { crumbsOf, formatMode, formatSize, formatSpeed, formatTime } from "../lib/files";
 import { call } from "../lib/ipc";
-import type {
-  ConnectionDto,
-  RemoteEntry,
-  SftpOpened,
-  TransferProgress,
-} from "../lib/types";
-import { useUiStore } from "../stores/uiStore";
+import type { RemoteEntry, SftpOpened, TransferProgress } from "../lib/types";
 
 /** 行内操作：同一时刻只允许一个，避免多个输入框同时出现。 */
 type RowAction =
@@ -20,11 +14,19 @@ type RowAction =
   | { kind: "delete"; entry: RemoteEntry }
   | null;
 
-export default function FilesPage() {
-  const pageActive = useUiStore((state) => state.activePage === "files");
-  const connectionsRevision = useUiStore((state) => state.connectionsRevision);
+interface FilePanelProps {
+  /**
+   * 浏览哪台机器。**跟着会话标签走**：终端在哪个标签，文件面板就属于那台机器。
+   *
+   * 合并前是「文件页自己再选一次服务器」，同一个主机要选两次、连两次（前端意义上的），
+   * 这是用户反馈里最别扭的地方。
+   */
+  connectionId: string;
+  /** 面板里的紧凑布局（窄一些，少显示一列） */
+  compact?: boolean;
+}
 
-  const [connections, setConnections] = useState<ConnectionDto[]>([]);
+export default function FilePanel({ connectionId, compact = false }: FilePanelProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [home, setHome] = useState("");
   const [path, setPath] = useState("/");
@@ -43,31 +45,13 @@ export default function FilesPage() {
     sessionRef.current = sessionId;
   }, [sessionId]);
 
-  // 连接列表：与终端页同一条约定，常驻挂载的页面不能只拉一次
-  useEffect(() => {
-    let cancelled = false;
-    call<ConnectionDto[]>("connection_list", { query: null })
-      .then((rows) => {
-        if (!cancelled) setConnections(rows);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [pageActive, connectionsRevision]);
-
-  /**
-   * 清理后端残留的 SFTP 会话（整页重载后前端 sessionId 会丢）。
-   * 本页常驻挂载，只有真正重载时才会再跑一次。
-   */
-  useEffect(() => {
-    void call<number>("sftp_close_all").catch(() => undefined);
-  }, []);
-
   // 传输进度
   useEffect(() => {
     const unlisten = listen<TransferProgress>("sftp:progress", (event) => {
       const payload = event.payload;
+      // 会话页里每个标签一个面板，事件是全局广播的：
+      // 不过滤的话 A 标签的传输会显示在 B 标签的面板里。
+      if (payload.sessionId !== sessionRef.current) return;
       setTransfers((prev) => {
         const index = prev.findIndex((item) => item.transferId === payload.transferId);
         if (index < 0) return [...prev, payload];
@@ -87,12 +71,12 @@ export default function FilesPage() {
     setPath(target);
   }, []);
 
-  const openSession = async (connection: ConnectionDto) => {
+  const openSession = async (connectionId: string) => {
     setBusy(true);
     setNotice(null);
     try {
       const opened = await call<SftpOpened>("sftp_open", {
-        connectionId: connection.id,
+        connectionId,
         trustFingerprint: null,
       });
       setSessionId(opened.sessionId);
@@ -116,11 +100,37 @@ export default function FilesPage() {
     setSessionId(null);
     setEntries([]);
     setPath("/");
-    setNotice(null);
+    // 留一句提示：不然面板变成一个没有出口的空屏，用户不知道还能重连
+    setNotice("已断开 SFTP 连接。");
     if (sid) {
       await call<void>("sftp_close", { sessionId: sid }).catch(() => undefined);
     }
   };
+
+  /**
+   * 嵌入模式：进入面板就连上当前标签的机器。
+   *
+   * 用 ref 记住已经连过的 id，避免 StrictMode 下的重复执行和无关重渲染反复建连。
+   * 切换标签时父组件换 `connectionId`，这里会为新机器再连一次；
+   * 旧机器那条连接由父组件卸载旧面板时关掉。
+   */
+  const autoConnected = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoConnected.current === connectionId) return;
+    autoConnected.current = connectionId;
+    void openSession(connectionId);
+    // openSession 每次渲染都是新函数，放进依赖会导致无限重连
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId]);
+
+  // 面板卸载（关标签 / 关面板）时关掉自己的 SFTP 会话，避免连接泄漏
+  useEffect(
+    () => () => {
+      const sid = sessionRef.current;
+      if (sid) void call<void>("sftp_close", { sessionId: sid }).catch(() => undefined);
+    },
+    [],
+  );
 
   const refresh = async () => {
     if (!sessionId) return;
@@ -257,44 +267,24 @@ export default function FilesPage() {
 
   if (!sessionId) {
     return (
-      <div className="files-page">
-        <div className="files-empty">
-          <h2>SFTP 文件管理</h2>
-          <p>
-            选一台服务器打开文件面板。SFTP 会单独建一条连接，传大文件时不会拖慢终端。
-          </p>
-          {busy ? <p className="files-hint">正在连接…</p> : null}
-          {notice ? <p className="files-error">{notice}</p> : null}
-          {connections.length === 0 ? (
-            <p className="files-hint">
-              还没有保存的连接。先去「连接」页添加一台服务器。
-            </p>
-          ) : (
-            <ul className="files-picker">
-              {connections.map((connection) => (
-                <li key={connection.id}>
-                  <button
-                    type="button"
-                    className="term-picker__item"
-                    disabled={busy}
-                    onClick={() => openSession(connection)}
-                  >
-                    <span className="term-picker__name">{connection.name}</span>
-                    <span className="term-picker__host">
-                      {connection.username}@{connection.host}:{connection.port}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <div className="file-panel__status">
+        {busy ? <p className="files-hint">正在连接…</p> : null}
+        {notice ? <p className="files-error">{notice}</p> : null}
+        {!busy ? (
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={() => void openSession(connectionId)}
+          >
+            重新连接
+          </button>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="files-page">
+    <div className={`file-panel${compact ? " is-compact" : ""}`}>
       <div className="files-bar">
         <button type="button" className="btn btn--sm" onClick={goUp} disabled={path === "/"}>
           ↑ 上一级
@@ -316,9 +306,11 @@ export default function FilesPage() {
           上传…
         </button>
         <span className="files-bar__spacer" />
-        <span className="files-bar__home" title={`家目录 ${home}`}>
-          {home}
-        </span>
+        {compact ? null : (
+          <span className="files-bar__home" title={`家目录 ${home}`}>
+            {home}
+          </span>
+        )}
         <button type="button" className="btn btn--sm" onClick={closeSession}>
           断开
         </button>

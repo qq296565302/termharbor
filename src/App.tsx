@@ -2,7 +2,6 @@ import { lazy, Suspense, useEffect } from "react";
 
 import { usePing } from "./hooks/usePing";
 import ConnectionsPage from "./pages/ConnectionsPage";
-import FilesPage from "./pages/FilesPage";
 import SelfCheckPage from "./pages/SelfCheckPage";
 import AboutPage from "./pages/AboutPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -20,7 +19,6 @@ const NAV: NavItem[] = [
   { id: "selfcheck", label: "自检" },
   { id: "connections", label: "连接" },
   { id: "terminal", label: "终端" },
-  { id: "files", label: "文件" },
   { id: "settings", label: "设置" },
   { id: "about", label: "关于" },
 ];
@@ -37,7 +35,6 @@ const TITLES: Record<PageId, string> = {
   selfcheck: "自检",
   connections: "连接管理",
   terminal: "终端会话",
-  files: "SFTP 文件",
   settings: "设置",
   about: "关于",
   ime: "输入法测试",
@@ -123,11 +120,6 @@ export default function App() {
           {/* 终端页常驻挂载：切到别的页面时只是隐藏，否则所有会话都会被销毁 */}
           <div className="content__slot" hidden={activePage !== "terminal"}>
             <TerminalPage />
-          </div>
-
-          {/* 文件页同样常驻挂载：切走时保住当前目录、列表与传输进度 */}
-          <div className="content__slot" hidden={activePage !== "files"}>
-            <FilesPage />
           </div>
 
           {activePage === "ime" && ImeTestPage ? (

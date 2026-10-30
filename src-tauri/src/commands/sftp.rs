@@ -193,7 +193,7 @@ pub async fn sftp_upload(
     state.transfers.register(transfer_id.clone(), token.clone());
 
     let transfers = state.transfers.clone();
-    let emit = progress_emitter(app);
+    let emit = progress_emitter(app, session_id.clone());
     let tid = transfer_id.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -239,7 +239,7 @@ pub async fn sftp_download(
     state.transfers.register(transfer_id.clone(), token.clone());
 
     let transfers = state.transfers.clone();
-    let emit = progress_emitter(app);
+    let emit = progress_emitter(app, session_id.clone());
     let tid = transfer_id.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -279,15 +279,60 @@ fn new_transfer_id(state: &AppState, session_id: &str) -> String {
     format!("{session_id}::{}", state.next_session_seq())
 }
 
-fn progress_emitter(app: tauri::AppHandle) -> transfer::ProgressFn {
+/// 推给前端的事件载荷：进度字段 + 所属会话。
+///
+/// 会话页现在一个标签一个文件面板，多个面板同时监听同一个事件；
+/// 没有 `sessionId` 它们分不清「这条进度是不是我的」，会互相显示对方的传输。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    session_id: String,
+    #[serde(flatten)]
+    progress: transfer::TransferProgress,
+}
+
+fn progress_emitter(app: tauri::AppHandle, session_id: String) -> transfer::ProgressFn {
     Box::new(move |payload| {
-        let _ = app.emit(EVT_SFTP_PROGRESS, payload);
+        let event = ProgressEvent {
+            session_id: session_id.clone(),
+            progress: payload,
+        };
+        let _ = app.emit(EVT_SFTP_PROGRESS, event);
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 事件载荷的形状是前后端契约：前端靠 `sessionId` 区分是哪个面板的传输。
+    /// 这个测试盯住字段名，改名会让前端静默收不到自己的进度。
+    #[test]
+    fn progress_event_carries_session_id() {
+        let event = ProgressEvent {
+            session_id: "f1".to_string(),
+            progress: crate::sftp::transfer::TransferProgress {
+                transfer_id: "f1::7".to_string(),
+                direction: "upload",
+                name: "a.txt".to_string(),
+                transferred: 10,
+                total: 100,
+                bps: 5,
+                state: "running",
+                error: None,
+            },
+        };
+
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["sessionId"], "f1");
+        // progress 被 flatten 进来，字段是同级的
+        assert_eq!(value["transferId"], "f1::7");
+        assert_eq!(value["state"], "running");
+        assert!(
+            value.get("progress").is_none(),
+            "flatten 后不该再有嵌套对象"
+        );
+    }
 
     #[test]
     fn transfer_id_is_namespaced_by_session() {

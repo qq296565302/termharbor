@@ -4,13 +4,12 @@ export type PageId =
   | "selfcheck"
   | "connections"
   | "terminal"
-  | "files"
   | "settings"
   | "about"
   | "ime";
 
 /** 生产构建里没有输入法测试页（S3 的取证页只在 dev 出现）。 */
-const BASE_PAGES = ["selfcheck", "connections", "terminal", "files", "settings", "about"] as const;
+const BASE_PAGES = ["selfcheck", "connections", "terminal", "settings", "about"] as const;
 const PAGE_KEY = "termharbor.activePage";
 
 function allowedPages(): readonly string[] {
@@ -27,12 +26,23 @@ function allowedPages(): readonly string[] {
  * 用 sessionStorage 而不是 localStorage：重开应用回到初始页是合理的，
  * 而同一次运行里的意外重载应该保住位置。
  */
+/**
+ * 存档里的页面名 → 合法页面名。不合法返回 null（由调用方给默认值）。
+ *
+ * 单独抽出来是为了能测：`loadPage` 在模块加载时就跑，测试没法替换 sessionStorage。
+ */
+export function resolveSavedPage(saved: string | null | undefined): PageId | null {
+  if (!saved) return null;
+  // 文件页已经并进会话页（终端右侧的文件面板）。老标签页里存着 "files"，
+  // 直接落到终端页，别让用户看到一张空白页。
+  if (saved === "files") return "terminal";
+  return allowedPages().includes(saved) ? (saved as PageId) : null;
+}
+
 function loadPage(): PageId {
   try {
-    const saved = globalThis.sessionStorage?.getItem(PAGE_KEY);
-    if (saved && allowedPages().includes(saved)) {
-      return saved as PageId;
-    }
+    const resolved = resolveSavedPage(globalThis.sessionStorage?.getItem(PAGE_KEY));
+    if (resolved) return resolved;
   } catch {
     // 无 sessionStorage（隐私模式、测试环境）时静默降级
   }
