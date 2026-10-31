@@ -5,6 +5,7 @@
 //! 先占位，按开发计划的里程碑逐步填充。
 
 pub mod commands;
+pub mod config_io;
 pub mod crypto;
 pub mod error;
 pub mod events;
@@ -165,6 +166,8 @@ pub fn run() {
             commands::snippets::env_probe,
             commands::diag::diag_run,
             commands::diag::load_snapshot,
+            commands::config_io::config_export,
+            commands::config_io::config_import,
             commands::settings::settings_get,
             commands::settings::settings_update,
         ])

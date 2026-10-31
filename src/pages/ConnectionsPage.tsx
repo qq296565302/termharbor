@@ -1,4 +1,4 @@
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveFile } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 
 import { AppError, fromUnknown } from "../lib/errors";
@@ -92,6 +92,8 @@ export default function ConnectionsPage() {
 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  /** 导入/导出进行中，按钮置灰，避免连点产生两份文件 */
+  const [ioBusy, setIoBusy] = useState(false);
   const [pendingTrust, setPendingTrust] = useState<{ algo: string; fingerprint: string } | null>(
     null,
   );
@@ -114,6 +116,74 @@ export default function ConnectionsPage() {
   useEffect(() => {
     void reload(query);
   }, [query, reload]);
+
+  /**
+   * 导出全部连接。
+   *
+   * 文件里**没有密码、没有主机指纹** —— 只有"怎么连到哪台机器"。
+   * 换电脑后第一次连接要重新输密码、重新确认指纹，这是刻意的（见 config_io 模块头）。
+   */
+  const exportConnections = async () => {
+    setIoBusy(true);
+    setNotice(null);
+    try {
+      const picked = await saveFile({
+        title: "导出连接配置",
+        defaultPath: "termharbor-connections.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!picked) return;
+
+      const summary = await call<{ connections: number; path: string }>("config_export", {
+        path: picked,
+      });
+      setNotice({
+        tone: "ok",
+        title: `已导出 ${summary.connections} 条连接`,
+        detail: "文件里不含密码与主机指纹；换电脑导入后首次连接需要重新输密码、确认指纹。",
+      });
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+    } finally {
+      setIoBusy(false);
+    }
+  };
+
+  /**
+   * 从文件导入连接。已有的（主机+端口+用户名相同）跳过，不覆盖。
+   */
+  const importConnections = async () => {
+    setIoBusy(true);
+    setNotice(null);
+    try {
+      const picked = await open({
+        title: "导入连接配置",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      const file = Array.isArray(picked) ? picked[0] : picked;
+      if (!file) return;
+
+      const summary = await call<{ imported: number; skipped: number }>("config_import", {
+        path: file,
+      });
+
+      await reload(query);
+      bumpConnections();
+
+      const skipped = summary.skipped > 0 ? `，跳过 ${summary.skipped} 条已存在的` : "";
+      setNotice({
+        tone: summary.imported > 0 ? "ok" : "warn",
+        title: summary.imported > 0 ? `已导入 ${summary.imported} 条${skipped}` : `没有新增连接${skipped}`,
+        detail: "导入的连接第一次使用前需要确认主机指纹；密码需要自己补填。",
+      });
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+    } finally {
+      setIoBusy(false);
+    }
+  };
 
   const openNew = () => {
     setEditingId(null);
@@ -275,6 +345,28 @@ export default function ConnectionsPage() {
           />
           <button type="button" className="btn btn--primary" onClick={openNew}>
             新建
+          </button>
+        </div>
+
+        {/* 导入导出放在搜索框下面一行：主按钮位只留给「新建」 */}
+        <div className="conn-list__io">
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={ioBusy}
+            title="导出全部连接（不含密码）"
+            onClick={() => void exportConnections()}
+          >
+            导出
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={ioBusy}
+            title="从文件导入连接（已存在的跳过）"
+            onClick={() => void importConnections()}
+          >
+            导入
           </button>
         </div>
 

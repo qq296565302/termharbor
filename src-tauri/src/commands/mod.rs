@@ -4,6 +4,7 @@
 //! 所以随着 M1–M3 推进，这里会越来越薄，真正的代码在 `storage/` `ssh/` `sftp/`。
 
 pub mod backup;
+pub mod config_io;
 pub mod connections;
 pub mod dev;
 pub mod diag;

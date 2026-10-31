@@ -3194,3 +3194,16 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 连接页的导入/导出按钮：搜索框下面一行，两个等宽。
+   不额外加左右内边距 —— .conn-list 本身没有左内边距，加了会和上面"新建"错位 */
+.conn-list__io {
+  display: flex;
+  gap: 6px;
+}
+
+.conn-list__io .btn {
+  flex: 1;
+  padding: 3px 8px;
+  font-size: 11.5px;
+}
