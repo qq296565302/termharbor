@@ -1,3 +1,4 @@
+import { keySourceLabel } from "../lib/labels";
 import type { Pong } from "../lib/types";
 
 interface Props {
@@ -45,14 +46,16 @@ export default function AboutPage({ pong }: Props) {
                 {pong ? `v${pong.schemaVersion}` : "—"}
                 {pong && pong.schemaVersion !== pong.latestSchemaVersion ? (
                   <span className="about__warn">
-                    （最新为 v{pong.latestSchemaVersion}，重启后升级）
+                    {pong.schemaVersion < pong.latestSchemaVersion
+                      ? `（程序需要 v${pong.latestSchemaVersion}，重启后自动迁移）`
+                      : `（比程序新，可能是装回了旧版本；程序只认 v${pong.latestSchemaVersion}）`}
                   </span>
                 ) : null}
               </td>
             </tr>
             <tr>
               <th>密钥来源</th>
-              <td>{pong?.keySource ?? "—"}</td>
+              <td title={pong?.keySource ?? undefined}>{keySourceLabel(pong?.keySource).text}</td>
             </tr>
             <tr>
               <th>数据目录</th>

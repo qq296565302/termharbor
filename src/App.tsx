@@ -1,6 +1,8 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useSyncExternalStore } from "react";
 
 import { usePing } from "./hooks/usePing";
+import { clearIpcFailure, getIpcFailure, subscribeIpcFailure } from "./lib/ipc";
+import { ipcLabel, keySourceLabel } from "./lib/labels";
 import ConnectionsPage from "./pages/ConnectionsPage";
 import AboutPage from "./pages/AboutPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -71,6 +73,8 @@ export default function App() {
   const { activePage, setActivePage } = useUiStore();
   const sessionCount = useSessionStore((state) => state.tabs.length);
   const { pong, error, loading, refresh } = usePing();
+  /** 最近一次「根本没调到后端」的调用（`invoke` 自己抛的错，不是业务错误） */
+  const ipcFailure = useSyncExternalStore(subscribeIpcFailure, getIpcFailure);
 
   const loadSettings = useSettingsStore((state) => state.load);
 
@@ -81,6 +85,12 @@ export default function App() {
 
   const statusText = error ? "后端异常" : pong ? (pong.locked ? "未解锁" : "就绪") : "连接中";
   const statusTone = error || pong?.locked ? "warn" : pong ? "ok" : "idle";
+
+  // 状态栏里的文案（枚举名 → 人话）。悬停能看到一句解释，不用猜。
+  const keySource = keySourceLabel(pong?.keySource);
+  const ipc = ipcLabel(error?.code ?? null, ipcFailure);
+  // 平时不显示 schema 版本 —— 它只在"库和程序对不上"时有意义
+  const schemaDrift = !!pong && pong.schemaVersion !== pong.latestSchemaVersion;
 
   return (
     <div className="shell">
@@ -115,9 +125,17 @@ export default function App() {
       <main className="main">
         <header className="topbar">
           <h1>{TITLES[activePage]}</h1>
-          <span className="topbar__meta">
-            {pong ? `v${pong.version} · schema v${pong.schemaVersion}` : loading ? "…" : "—"}
+          <span className="topbar__meta" title="版本号来自安装包（tauri.conf.json），不是编译期猜的">
+            {pong ? `v${pong.version}` : loading ? "…" : "—"}
           </span>
+          {schemaDrift && pong ? (
+            <span
+              className="topbar__warn"
+              title={`本地配置库结构是 v${pong.schemaVersion}，当前程序需要 v${pong.latestSchemaVersion}；落后的话重启一次就会自动迁移`}
+            >
+              配置库 v{pong.schemaVersion} ≠ 程序 v{pong.latestSchemaVersion}
+            </span>
+          ) : null}
         </header>
 
         <section className="content">
@@ -146,11 +164,17 @@ export default function App() {
         </section>
 
         <footer className="statusbar">
-          <span>会话 {sessionCount}</span>
+          <span title="已打开的终端标签数，每个标签一条 SSH 连接">会话 {sessionCount}</span>
           <span className="statusbar__sep" />
-          <span>密钥 {pong?.keySource ?? "—"}</span>
+          <span title={keySource.hint}>密钥 {keySource.text}</span>
           <span className="statusbar__spacer" />
-          <span>{error ? error.code : "IPC 就绪"}</span>
+          <span
+            className={ipcFailure ? "statusbar__alert" : undefined}
+            title={ipc.hint}
+            onClick={ipcFailure ? clearIpcFailure : undefined}
+          >
+            {ipc.text}
+          </span>
         </footer>
       </main>
     </div>

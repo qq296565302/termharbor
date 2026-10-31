@@ -178,6 +178,12 @@ pub async fn sftp_upload(
     let conn = state.sftp.get(&session_id)?;
     let local = PathBuf::from(&local_path);
 
+    // 先做一次同步校验。目录、应用数据目录这类必然失败的源，应该在这里就返回错误，
+    // 而不是先给个 transferId、再让进度条上出现一条失败 —— 拖拽上传一次丢进来好几个
+    // 文件时，前者是一句明确的提示，后者是一串转瞬即逝的红条。
+    let protected: [&std::path::Path; 2] = [&state.paths.data_dir, &state.paths.backup_dir];
+    transfer::ensure_upload_source(&local, &protected)?;
+
     let file_name = match name {
         Some(given) if !given.trim().is_empty() => given,
         _ => local

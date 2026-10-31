@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AppError, ERROR_MESSAGES, fromUnknown, messageFor } from "./errors";
+import { AppError, ERROR_MESSAGES, fromUnknown, isTransportFailure, messageFor } from "./errors";
 
 describe("messageFor", () => {
   it("已知 code 走中文映射", () => {
@@ -45,5 +45,25 @@ describe("fromUnknown", () => {
   it("幂等：已是 AppError 时原样返回", () => {
     const original = new AppError("STORAGE_ERROR", "x");
     expect(fromUnknown(original)).toBe(original);
+  });
+});
+
+describe("isTransportFailure", () => {
+  it("Rust 正常返回的 { code } 是业务错误，不算调不通", () => {
+    expect(isTransportFailure({ code: "SSH_AUTH_FAILED", message: "x" })).toBe(false);
+    expect(isTransportFailure(new AppError("VALIDATION_ERROR", "x"))).toBe(false);
+  });
+
+  it("invoke 自己抛的字符串才是没调通", () => {
+    // 典型的两种情况：命令名不存在、参数对不上
+    expect(isTransportFailure("command sftp_list not found")).toBe(true);
+    expect(
+      isTransportFailure("invalid args `path` for command `sftp_list`: invalid type"),
+    ).toBe(true);
+  });
+
+  it("普通 Error 也算（IPC 通道异常的形态不固定）", () => {
+    expect(isTransportFailure(new Error("window is closed"))).toBe(true);
+    expect(isTransportFailure(null)).toBe(true);
   });
 });

@@ -125,16 +125,26 @@ button {
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
+  gap: 1px;
+  padding: 6px 8px;
 }
 
+/*
+ * 导航项：平铺一行，不做渐变药丸。
+ *
+ * 原来这里是「左侧霓虹条 + 向右渐隐的青绿渐变 + 8px 圆角」，三样凑在一起很像
+ * 模板站里的卡片按钮。现在只留两件事：选中时给一条 2px 竖线 + 一行极淡底色，
+ * 其余靠字重和颜色区分 —— 工具该长这样，不该像落地页。
+ */
 .nav__item {
-  display: block;
+  position: relative;
+  display: flex;
+  align-items: center;
   width: 100%;
-  padding: 8px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   text-align: left;
@@ -148,9 +158,21 @@ button {
 }
 
 .nav__item.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
   font-weight: 500;
+}
+
+/* 竖线贴在行内左侧、上下各留 7px，圆角才不会把它啃掉 */
+.nav__item.is-active::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
 }
 
 .sidebar__foot {
@@ -213,6 +235,19 @@ button {
   color: var(--text-faint);
 }
 
+/* 只在「本地配置库版本 ≠ 程序需要的版本」时出现，平时不占位置 */
+.topbar__warn {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
 .content {
   flex: 1;
   overflow-y: auto;
@@ -241,6 +276,14 @@ button {
 
 .statusbar__spacer {
   margin-left: auto;
+}
+
+/* 出现过调不通的调用：这里从「就绪」变成一条可点击清除的告警 */
+.statusbar__alert {
+  color: var(--warn);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
 
 /* ------------------------------------------------------------ 页面与卡片 */
@@ -970,8 +1013,8 @@ button {
 .term-tabs {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-muted);
 }
@@ -981,7 +1024,6 @@ button {
 .term-tabs__list {
   display: flex;
   flex: 1;
-  gap: 4px;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
@@ -991,41 +1033,65 @@ button {
   height: 0;
 }
 
-/* 右侧动作组：永远靠右，彼此留 6px，与标签区之间再隔 10px */
+/* 右侧动作组：永远靠右。按钮之间的分组靠一条竖线，不靠间距猜 */
 .term-tabs__actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   margin-left: auto;
 }
 
+.term-tabs__divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 5px;
+  background: var(--border-strong);
+}
+
+/*
+ * 标签：编辑器式平铺，不画圆角药丸。
+ *
+ * 旧样式是「每个标签都有边框 + 圆角 + 激活时再加一条底部发光线」，三层装饰叠一起，
+ * 一多就像一堆按钮。现在标签之间只留 1px 细分隔线，激活与否只差底色 + 一条 2px 实线，
+ * 关掉按钮也只在悬停/激活时出现 —— 未激活的标签越安静，激活的那个越显眼。
+ */
 .term-tab {
+  position: relative;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  padding: 2px 4px 2px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.term-tab:first-child {
+  border-left: 1px solid var(--border);
+}
+
+.term-tab:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .term-tab.is-active {
   background: var(--bg);
-  border-color: var(--border-strong);
+  color: var(--text);
+  /* 底部实线贴着标签自己的下缘，不去和工具栏边框做像素对齐（那种对齐迟早会错位） */
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .term-tab__label {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 0;
+  height: 100%;
+  padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.term-tab.is-active .term-tab__label {
-  color: var(--text);
+  color: inherit;
+  font-size: 12.5px;
 }
 
 .term-tab__title {
@@ -1036,13 +1102,26 @@ button {
 }
 
 .term-tab__close {
-  padding: 1px 5px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
   color: var(--text-faint);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.term-tab:hover .term-tab__close,
+.term-tab.is-active .term-tab__close,
+.term-tab__close:focus-visible {
+  opacity: 1;
 }
 
 .term-tab__close:hover {
@@ -1050,18 +1129,31 @@ button {
   color: var(--danger);
 }
 
+/* 工具栏按钮：纯幽灵按钮。原来全是虚线框，四个摆一起像一排"占位符" */
 .term-tabs__new {
-  padding: 3px 10px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 6px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.term-tabs__new:hover {
-  border-color: var(--accent);
+.term-tabs__new:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.term-tabs__new:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.term-tabs__new.is-active {
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -1244,6 +1336,7 @@ button {
 /* ------------------------------------------------------------ SFTP 文件管理（M3） */
 
 .file-panel {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -1252,6 +1345,38 @@ button {
   gap: 7px;
   padding: 8px 10px 0;
   background: var(--bg);
+}
+
+/* 拖拽悬停：虚线框 + 一层半透明蒙版，松手前就能确认会传到哪里 */
+.file-panel.is-drop::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  z-index: 4;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
+}
+
+.files-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.files-drop__text {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .files-hint {
@@ -1790,11 +1915,37 @@ button {
 }
 
 .term-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   padding: 5px 12px;
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   color: var(--warn);
   font-size: 11.5px;
+}
+
+.term-notice__text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 收起按钮要和提示文字同色：这里继承的是 --warn，不是正文色 */
+.term-notice__close {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.term-notice__close:hover {
+  opacity: 1;
 }
 
 /* ------------------------------------------------------------ 诊断结果浮层 */
@@ -2521,49 +2672,19 @@ button {
   color: var(--danger);
 }
 
-/* 工具栏上的「片段」入口，打开时高亮 */
-.term-tabs__new.is-active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-/* ============================================================ 赛博朋克点缀（浅色版） */
+/* ============================================================ 点缀（浅色版） */
 /* 原则：浅底上的「发光」不能靠亮色叠加，那样只会糊成一片。
-   改成三条：细光线（1px 青）、左侧霓虹条、极淡的渐变底色。
-   只加在高可见度、低干扰的位置：侧栏、品牌、导航、顶栏、按钮、滚动条。 */
+   2026-10-31 收敛：侧栏与导航那几处渐变 + 投影 + 霓虹条已经去掉了（用户反馈"一股 AI 味"），
+   只保留顶栏那条渐隐细线和滚动条，其余靠排版与留白。 */
 
-/* 侧栏右缘一条 1px 青色分隔线，右侧再压一层极淡的投影把内容区托起来 */
-.sidebar {
-  box-shadow:
-    1px 0 0 0 rgba(13, 148, 136, 0.14),
-    8px 0 20px -20px rgba(13, 148, 136, 0.45);
-}
-
-/* 品牌标记：浅底上 drop-shadow 要更收敛，否则边缘发灰 */
-.brand__mark {
-  filter: drop-shadow(0 2px 6px rgba(13, 148, 136, 0.28));
-}
-
+/* 品牌：logo 本身对比度够，不加投影；副标题也不做全大写 + 字距拉宽那一套 */
 .brand__text strong {
-  letter-spacing: 0.6px;
+  letter-spacing: 0.2px;
 }
 
 .brand__text span {
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-faint);
-}
-
-/* 当前页：左侧 2px 霓虹条 + 向右渐隐的底色 */
-.nav__item.is-active {
-  background: linear-gradient(90deg, rgba(13, 148, 136, 0.16), rgba(13, 148, 136, 0.01));
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.nav__item.is-active:hover {
-  color: var(--accent);
 }
 
 /* 顶栏底边一条中间亮、两端渐隐的光线 */
@@ -2590,11 +2711,6 @@ button {
   box-shadow:
     0 0 0 1px rgba(13, 148, 136, 0.5),
     0 2px 10px -4px rgba(13, 148, 136, 0.5);
-}
-
-/* 当前终端标签：底部一道光线，比整块高亮克制 */
-.term-tab.is-active {
-  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 /* 滚动条：默认的浅灰在冷白底上几乎看不见 */

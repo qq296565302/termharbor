@@ -83,6 +83,17 @@ export function isErrorPayload(value: unknown): value is AppErrorPayload {
   );
 }
 
+/**
+ * 这次失败是不是「前端根本没拿到 Rust 的答复」。
+ *
+ * 区分很关键：业务错误（Rust 正常返回 `{ code, message }`）是日常，不该报警；
+ * 而 `invoke` 自己抛的错（命令名不存在、参数对不上、通道断了）说明这条路本身坏了。
+ * 后者现在到处都是 `.catch(() => undefined)`，出了事一点痕迹都不留。
+ */
+export function isTransportFailure(err: unknown): boolean {
+  return !isErrorPayload(err);
+}
+
 /** code → 用户可读文案。未知 code 退回后端兜底文案，再退回通用文案。 */
 export function messageFor(code: string, fallback?: string): string {
   if (isKnownCode(code)) {

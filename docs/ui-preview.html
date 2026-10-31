@@ -1,0 +1,511 @@
+<!doctype html>
+<!--
+  静态预览：只用来在动手装包之前看「侧栏导航 + 终端标签条」长什么样。
+
+  注意：这里面的 CSS 是从 src/styles.css 抄过来的**片段**，不参与构建，
+  真样式永远以 src/styles.css 为准。看完了可以直接删这个文件。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>TermHarbor · 侧栏与标签条预览</title>
+    <style>
+      :root {
+        --bg: #f5f8fb;
+        --bg-muted: #e9eff6;
+        --bg-sunken: #edf2f8;
+        --border: rgba(13, 148, 136, 0.16);
+        --border-strong: rgba(13, 148, 136, 0.34);
+        --text: #0d1b2a;
+        --text-muted: #47607a;
+        --text-faint: #7b8ca1;
+        --accent: #0d9488;
+        --accent-soft: rgba(13, 148, 136, 0.1);
+        --ok: #0d9f6e;
+        --danger: #d81b60;
+        --danger-soft: rgba(216, 27, 96, 0.1);
+        --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", system-ui, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+        color-scheme: light;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1c1c1f;
+          --bg-muted: #232327;
+          --bg-sunken: #191a1c;
+          --border: #32323a;
+          --border-strong: #43434d;
+          --text: #ececef;
+          --text-muted: #a0a0aa;
+          --text-faint: #75757f;
+          --accent: #85b7eb;
+          --accent-soft: #14293d;
+          --ok: #5dcaa5;
+          --danger: #f09595;
+          --danger-soft: #2c1a1a;
+          color-scheme: dark;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        font-family: var(--sans);
+        font-size: 14px;
+        color: var(--text);
+        background: var(--bg);
+        overflow: hidden;
+      }
+      button {
+        font-family: inherit;
+        font-size: inherit;
+        cursor: pointer;
+      }
+
+      .shell {
+        display: flex;
+        height: 100vh;
+      }
+
+      /* ---------------- 侧栏 ---------------- */
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        width: 212px;
+        flex: 0 0 212px;
+        background: var(--bg-muted);
+        border-right: 1px solid var(--border);
+        user-select: none;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 18px 16px 14px;
+      }
+      .brand__mark {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 30px;
+        border-radius: 8px;
+      }
+      .brand__text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.25;
+      }
+      .brand__text strong {
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.2px;
+      }
+      .brand__text span {
+        font-size: 11px;
+        color: var(--text-faint);
+      }
+
+      .nav {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        padding: 6px 8px;
+      }
+      .nav__item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        width: 100%;
+        height: 32px;
+        padding: 0 10px;
+        border: 0;
+        border-radius: 5px;
+        background: transparent;
+        color: var(--text-muted);
+        text-align: left;
+        font-size: 13px;
+        transition: background 120ms ease, color 120ms ease;
+      }
+      .nav__item:hover {
+        background: color-mix(in srgb, var(--text) 6%, transparent);
+        color: var(--text);
+      }
+      .nav__item.is-active {
+        background: color-mix(in srgb, var(--text) 5%, transparent);
+        color: var(--text);
+        font-weight: 500;
+      }
+      .nav__item.is-active::before {
+        content: "";
+        position: absolute;
+        top: 7px;
+        bottom: 7px;
+        left: 0;
+        width: 2px;
+        border-radius: 1px;
+        background: var(--accent);
+      }
+      .sidebar__foot {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: auto;
+        padding: 12px 18px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--text-faint);
+      }
+      .dot--ok {
+        background: var(--ok);
+      }
+
+      /* ---------------- 主区 ---------------- */
+      .main {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 48px;
+        flex: 0 0 48px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      .topbar h1 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+      }
+      .topbar__meta {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-faint);
+      }
+      .content {
+        flex: 1;
+        min-height: 0;
+        background: var(--bg-sunken);
+      }
+      .statusbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 26px;
+        flex: 0 0 26px;
+        padding: 0 16px;
+        border-top: 1px solid var(--border);
+        background: var(--bg-muted);
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+      .statusbar__sep {
+        width: 1px;
+        height: 11px;
+        background: var(--border-strong);
+      }
+      .statusbar__spacer {
+        margin-left: auto;
+      }
+
+      /* ---------------- 标签条 ---------------- */
+      .term-page {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .term-tabs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-muted);
+      }
+      .term-tabs__list {
+        display: flex;
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .term-tabs__actions {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 2px;
+        margin-left: auto;
+      }
+      .term-tabs__divider {
+        width: 1px;
+        height: 16px;
+        margin: 0 5px;
+        background: var(--border-strong);
+      }
+      .term-tab {
+        position: relative;
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        height: 30px;
+        padding: 0 4px 0 10px;
+        border-right: 1px solid var(--border);
+        color: var(--text-muted);
+      }
+      .term-tab:first-child {
+        border-left: 1px solid var(--border);
+      }
+      .term-tab:hover {
+        background: color-mix(in srgb, var(--text) 4%, transparent);
+      }
+      .term-tab.is-active {
+        background: var(--bg);
+        color: var(--text);
+        box-shadow: inset 0 -2px 0 var(--accent);
+      }
+      .term-tab__label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 100%;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font-size: 12.5px;
+      }
+      .term-tab__title {
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .term-tab__close {
+        display: grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        margin-left: 2px;
+        padding: 0;
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        color: var(--text-faint);
+        font-size: 13px;
+        line-height: 1;
+        opacity: 0;
+        transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+      }
+      .term-tab:hover .term-tab__close,
+      .term-tab.is-active .term-tab__close,
+      .term-tab__close:focus-visible {
+        opacity: 1;
+      }
+      .term-tab__close:hover {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+      .term-tabs__new {
+        height: 26px;
+        padding: 0 9px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 12px;
+        white-space: nowrap;
+        transition: background 120ms ease, color 120ms ease;
+      }
+      .term-tabs__new:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--text) 7%, transparent);
+        color: var(--text);
+      }
+      .term-tabs__new.is-active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      /* ---------------- 模拟终端与文件面板 ---------------- */
+      .term-body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+      .term-main {
+        flex: 1;
+        min-width: 0;
+        padding: 12px 14px;
+        background: #10161d;
+        color: #cfe3d8;
+        font-family: var(--mono);
+        font-size: 12.5px;
+        line-height: 1.6;
+        overflow: hidden;
+      }
+      .term-main .prompt {
+        color: #5dcaa5;
+      }
+      .term-files {
+        flex: 0 0 320px;
+        padding: 8px 10px;
+        border-left: 1px solid var(--border-strong);
+        background: var(--bg);
+      }
+      .files-bar {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+      .ghost-btn {
+        height: 24px;
+        padding: 0 8px;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--bg);
+        color: var(--text-muted);
+        font-size: 11.5px;
+      }
+      .files-line {
+        padding: 3px 0;
+        font-family: var(--mono);
+        font-size: 11.5px;
+        color: var(--text-muted);
+      }
+
+      .caption {
+        padding: 10px 20px 0;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .caption b {
+        color: var(--text);
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="#0F2A47" />
+            <path
+              d="M11 9.5 L19.5 16 L11 22.5"
+              fill="none"
+              stroke="#5DCAA5"
+              stroke-width="2.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <rect x="21" y="19.4" width="5" height="2.6" rx="1.3" fill="#B5D4F4" />
+          </svg>
+          <div class="brand__text">
+            <strong>TermHarbor</strong>
+            <span>终端港</span>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <button class="nav__item">连接</button>
+          <button class="nav__item is-active">终端</button>
+          <button class="nav__item">设置</button>
+          <button class="nav__item">关于</button>
+        </nav>
+
+        <div class="sidebar__foot">
+          <span class="dot dot--ok"></span>
+          <span>就绪</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <h1>终端会话</h1>
+          <span class="topbar__meta">v0.1.15</span>
+        </header>
+
+        <section class="content">
+          <div class="term-page">
+            <div class="term-tabs">
+              <div class="term-tabs__list">
+                <div class="term-tab is-active">
+                  <button class="term-tab__label">
+                    <span class="dot dot--ok"></span>
+                    <span class="term-tab__title">web-01</span>
+                  </button>
+                  <button class="term-tab__close">×</button>
+                </div>
+                <div class="term-tab">
+                  <button class="term-tab__label">
+                    <span class="dot dot--ok"></span>
+                    <span class="term-tab__title">db-prod</span>
+                  </button>
+                  <button class="term-tab__close">×</button>
+                </div>
+                <div class="term-tab">
+                  <button class="term-tab__label">
+                    <span class="dot"></span>
+                    <span class="term-tab__title">Windows 跳板机</span>
+                  </button>
+                  <button class="term-tab__close">×</button>
+                </div>
+              </div>
+
+              <div class="term-tabs__actions">
+                <button class="term-tabs__new">+ 新连接</button>
+                <span class="term-tabs__divider"></span>
+                <button class="term-tabs__new">片段</button>
+                <button class="term-tabs__new is-active">文件</button>
+                <button class="term-tabs__new">负载</button>
+              </div>
+            </div>
+
+            <div class="term-body">
+              <div class="term-main">
+                <div><span class="prompt">dev@web-01</span>:~$ cd /var/www</div>
+                <div><span class="prompt">dev@web-01</span>:/var/www$ ls</div>
+                <div>html&nbsp;&nbsp;nginx.conf</div>
+                <div><span class="prompt">dev@web-01</span>:/var/www$ ▊</div>
+              </div>
+              <div class="term-files">
+                <div class="files-bar">
+                  <button class="ghost-btn">↑ 上一级</button>
+                  <button class="ghost-btn">刷新</button>
+                  <button class="ghost-btn">~</button>
+                  <button class="ghost-btn">上传…</button>
+                </div>
+                <div class="files-line">/var/www</div>
+                <div class="files-line">📁 html</div>
+                <div class="files-line">📄 nginx.conf</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="statusbar">
+          <span>会话 3</span>
+          <span class="statusbar__sep"></span>
+          <span>密钥 系统凭据管理器</span>
+          <span class="statusbar__spacer"></span>
+          <span>IPC 就绪</span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

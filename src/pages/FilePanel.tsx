@@ -1,10 +1,12 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { crumbsOf, formatMode, formatSize, formatSpeed, formatTime } from "../lib/files";
 import { call } from "../lib/ipc";
+import { resolveCdPath } from "../lib/shell";
 import type { RemoteEntry, SftpOpened, TransferProgress } from "../lib/types";
 
 /** 行内操作：同一时刻只允许一个，避免多个输入框同时出现。 */
@@ -13,6 +15,14 @@ type RowAction =
   | { kind: "rename"; entry: RemoteEntry }
   | { kind: "delete"; entry: RemoteEntry }
   | null;
+
+/**
+ * 面板打开时先落在这里。
+ *
+ * 原来进 `$HOME`（多数机器是 `/root`），但用户要在 `/etc`、`/var` 之间来回翻，
+ * 每次都要从家目录往上爬 —— 直接给根目录，要看家目录有工具栏的 `~`。
+ */
+const ROOT_PATH = "/";
 
 interface FilePanelProps {
   /**
@@ -24,9 +34,16 @@ interface FilePanelProps {
   connectionId: string;
   /** 面板里的紧凑布局（窄一些，少显示一列） */
   compact?: boolean;
+  /**
+   * 终端里刚敲下的 `cd` 参数（原样，可能是 `~` / 相对路径）。
+   *
+   * `seq` 是父组件的自增序号：连着 `cd` 两次同一个目录也要各处理一次，
+   * 只比字符串的话第二次不会触发。
+   */
+  cdTarget?: { seq: number; target: string } | null;
 }
 
-export default function FilePanel({ connectionId, compact = false }: FilePanelProps) {
+export default function FilePanel({ connectionId, compact = false, cdTarget }: FilePanelProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [home, setHome] = useState("");
   const [path, setPath] = useState("/");
@@ -36,14 +53,56 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
   const [draft, setDraft] = useState("");
   const [action, setAction] = useState<RowAction>(null);
   const [transfers, setTransfers] = useState<TransferProgress[]>([]);
+  /** 拖拽本地文件悬停在面板上时的高亮 */
+  const [dragOver, setDragOver] = useState(false);
   /** 右键菜单。`entry` 为 null 表示点在空白处（只给目录级操作）。 */
   const [menu, setMenu] = useState<{ x: number; y: number; entry: RemoteEntry | null } | null>(null);
 
   const sessionRef = useRef<string | null>(null);
+  /**
+   * 我们**以为**的 shell 当前目录（不是面板正在看的目录）。
+   *
+   * 两者必须分开：用户可以点着面板逛到别处，而 shell 还站在原地；
+   * 那时敲 `cd sub`，相对路径要相对 shell 算，不是相对面板。
+   */
+  const shellCwd = useRef<string | null>(null);
+  /** 上一次 cd 前的 shell 目录，用来支持 `cd -` */
+  const prevShellCwd = useRef<string | null>(null);
+  /** 已经处理到哪个 seq，避免重复跟随 */
+  const followedSeq = useRef(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  /** 当前目录的镜像，给"传输完成后刷新"这类异步回调读（闭包里拿不到最新 state） */
+  const pathRef = useRef(path);
+  /** transferId → 这次上传的目标目录，用来判断要不要刷新当前列表 */
+  const uploadDirs = useRef(new Map<string, string>());
+  const refreshTimer = useRef<number | null>(null);
 
   useEffect(() => {
     sessionRef.current = sessionId;
   }, [sessionId]);
+
+  useEffect(() => {
+    pathRef.current = path;
+  }, [path]);
+
+  /**
+   * 合并刷新的定时器。
+   *
+   * 一次拖 10 个文件会有 10 条完成事件，逐条刷新就是 10 次 `sftp_list`；
+   * 攒 250ms 只刷一次，反正用户看到的都是最后一次。
+   */
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      const sid = sessionRef.current;
+      if (!sid) return;
+      // 失败不弹提示：这是"顺手刷新"，不打扰正在做的事
+      void call<RemoteEntry[]>("sftp_list", { sessionId: sid, path: pathRef.current })
+        .then((rows) => setEntries(rows))
+        .catch(() => undefined);
+    }, 250);
+  }, []);
 
   // 传输进度
   useEffect(() => {
@@ -59,11 +118,23 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
         next[index] = payload;
         return next;
       });
+
+      // 传完就刷一次列表，否则刚上传的文件要手动点「刷新」才看得见。
+      // 只认上传：下载动的是本地磁盘，远端目录没变。
+      if (payload.direction === "upload" && payload.state !== "running") {
+        const dir = uploadDirs.current.get(payload.transferId);
+        uploadDirs.current.delete(payload.transferId);
+        if (payload.state === "done" && dir === pathRef.current) scheduleRefresh();
+      }
     });
     return () => {
       void unlisten.then((fn) => fn());
+      if (refreshTimer.current !== null) {
+        window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
     };
-  }, []);
+  }, [scheduleRefresh]);
 
   const load = useCallback(async (sid: string, target: string) => {
     const rows = await call<RemoteEntry[]>("sftp_list", { sessionId: sid, path: target });
@@ -81,7 +152,13 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
       });
       setSessionId(opened.sessionId);
       setHome(opened.home);
-      await load(opened.sessionId, opened.home);
+      // 登录 shell 默认就落在 $HOME，用它作为相对路径的基准
+      shellCwd.current = opened.home;
+      prevShellCwd.current = null;
+      await load(opened.sessionId, ROOT_PATH).catch(() =>
+        // 少数服务器（Windows OpenSSH）列不出根，退回家目录而不是留个空面板
+        load(opened.sessionId, opened.home),
+      );
     } catch (err) {
       const error = fromUnknown(err);
       // 首次连一台机器必须先在「连接」页确认指纹，这里给一句能照做的提示
@@ -99,7 +176,9 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
     const sid = sessionRef.current;
     setSessionId(null);
     setEntries([]);
-    setPath("/");
+    setPath(ROOT_PATH);
+    shellCwd.current = null;
+    prevShellCwd.current = null;
     // 留一句提示：不然面板变成一个没有出口的空屏，用户不知道还能重连
     setNotice("已断开 SFTP 连接。");
     if (sid) {
@@ -123,7 +202,8 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId]);
 
-  // 面板卸载（关标签 / 关面板）时关掉自己的 SFTP 会话，避免连接泄漏
+  // 面板卸载（关标签）时关掉自己的 SFTP 会话，避免连接泄漏。
+  // 注意：**关面板不再走这里** —— 父组件现在只把它隐藏，会话留着下次秒开。
   useEffect(
     () => () => {
       const sid = sessionRef.current;
@@ -131,6 +211,35 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
     },
     [],
   );
+
+  /**
+   * 跟着终端里敲的 `cd` 走。
+   *
+   * 宁可不动也不能乱跳：解析出来的路径要先在远端列一次，列不出来（目录不存在、
+   * 是个文件、shell 那条 cd 其实失败了）就保持原地。
+   */
+  useEffect(() => {
+    if (!cdTarget || !sessionId) return;
+    if (followedSeq.current === cdTarget.seq) return;
+    followedSeq.current = cdTarget.seq;
+
+    const cwd = shellCwd.current ?? home;
+    const target =
+      cdTarget.target === "-" ? prevShellCwd.current : resolveCdPath(cdTarget.target, cwd, home);
+    if (!target) return;
+
+    void (async () => {
+      try {
+        await load(sessionId, target);
+        prevShellCwd.current = cwd;
+        shellCwd.current = target;
+      } catch {
+        // shell 那边大概也是 cd 失败，面板保持不动即可
+      }
+    })();
+    // load / home 变化不该重放同一条 cd，靠 followedSeq 兜住
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cdTarget, sessionId]);
 
   const refresh = async () => {
     if (!sessionId) return;
@@ -193,26 +302,49 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
       });
     });
 
-  const upload = async () => {
+  /**
+   * 上传本地文件到当前目录。
+   *
+   * 两个入口共用：工具栏「上传…」（系统文件对话框）与**拖拽**（OS 直接把路径丢过来，
+   * 不经过对话框，所以后端那道 `ensure_upload_source` 是唯一的安全边界）。
+   */
+  const upload = async (paths?: string[]) => {
     if (!sessionId) return;
+    const dir = path;
     try {
-      const picked = await open({
-        multiple: true,
-        directory: false,
-        title: "选择要上传的文件",
-      });
-      const files = Array.isArray(picked) ? picked : picked ? [picked] : [];
-      if (files.length === 0) return;
-
-      for (const file of files) {
-        await call<string>("sftp_upload", {
-          sessionId,
-          localPath: file,
-          remoteDir: path,
-          name: null,
+      let list = paths;
+      if (!list) {
+        const picked = await open({
+          multiple: true,
+          directory: false,
+          title: "选择要上传的文件",
         });
+        list = Array.isArray(picked) ? picked : picked ? [picked] : [];
       }
-      setNotice(`已加入 ${files.length} 个上传任务`);
+      if (list.length === 0) return;
+
+      let queued = 0;
+      const failed: string[] = [];
+      for (const localPath of list) {
+        try {
+          const transferId = await call<string>("sftp_upload", {
+            sessionId,
+            localPath,
+            remoteDir: dir,
+            name: null,
+          });
+          // 记住这次传到哪个目录：完成事件里没有目录信息，只有靠这里对上
+          uploadDirs.current.set(transferId, dir);
+          queued += 1;
+        } catch (err) {
+          // 一次拖一堆时，逐条列出来比只显示最后一条有用
+          const name = localPath.split(/[\\/]/).pop() || localPath;
+          failed.push(`${name}：${fromUnknown(err).message}`);
+        }
+      }
+
+      if (failed.length > 0) setNotice(failed.join("；"));
+      else setNotice(`已加入 ${queued} 个上传任务`);
     } catch (err) {
       setNotice(fromUnknown(err).message);
     }
@@ -237,6 +369,61 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
   const cancelTransfer = async (transferId: string) => {
     await call<boolean>("sftp_cancel", { transferId }).catch(() => false);
   };
+
+  /** 拖拽回调里要拿到最新的 sessionId / path，所以每次渲染后同步一份 */
+  const dropRef = useRef<(paths: string[]) => void>(() => undefined);
+
+  useEffect(() => {
+    dropRef.current = (paths) => void upload(paths);
+  });
+
+  /**
+   * 接收 OS 拖进来的文件。
+   *
+   * Tauri 里 `dragDropEnabled` 默认开着，HTML5 的 drop 事件是收不到的，
+   * 只能监听 webview 级别的这个事件。它不给"落在哪个元素上"，只给物理像素坐标，
+   * 所以自己拿面板的矩形判断 —— 隐藏的标签页矩形宽高是 0，天然不会误接。
+   */
+  useEffect(() => {
+    let stop: (() => void) | null = null;
+    let disposed = false;
+
+    const inside = (position: { x: number; y: number }) => {
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) return false;
+      const ratio = window.devicePixelRatio || 1;
+      const x = position.x / ratio;
+      const y = position.y / ratio;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const payload = event.payload;
+        if (payload.type === "leave") {
+          setDragOver(false);
+          return;
+        }
+        if (payload.type === "enter" || payload.type === "over") {
+          setDragOver(inside(payload.position));
+          return;
+        }
+
+        setDragOver(false);
+        if (!inside(payload.position)) return;
+        dropRef.current(payload.paths);
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else stop = fn;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
 
   const crumbs = useMemo(() => crumbsOf(path), [path]);
   const activeTransfers = transfers.filter((item) => item.state === "running");
@@ -284,13 +471,25 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
   }
 
   return (
-    <div className={`file-panel${compact ? " is-compact" : ""}`}>
+    <div
+      className={`file-panel${compact ? " is-compact" : ""}${dragOver ? " is-drop" : ""}`}
+      ref={panelRef}
+    >
       <div className="files-bar">
         <button type="button" className="btn btn--sm" onClick={goUp} disabled={path === "/"}>
           ↑ 上一级
         </button>
         <button type="button" className="btn btn--sm" onClick={refresh} disabled={busy}>
           刷新
+        </button>
+        <button
+          type="button"
+          className="btn btn--sm"
+          title={home ? `回家目录 ${home}` : "回家目录"}
+          disabled={!home}
+          onClick={() => home && void load(sessionId, home)}
+        >
+          ~
         </button>
         <button
           type="button"
@@ -302,7 +501,7 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
         >
           新建文件夹
         </button>
-        <button type="button" className="btn btn--sm" onClick={upload}>
+        <button type="button" className="btn btn--sm" onClick={() => void upload()}>
           上传…
         </button>
         <span className="files-bar__spacer" />
@@ -365,7 +564,9 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
         </div>
 
         {entries.length === 0 && !busy ? (
-          <p className="files-hint files-hint--pad">这个目录是空的。</p>
+          <p className="files-hint files-hint--pad">
+            这个目录是空的。可以把本地文件直接拖进这个面板上传。
+          </p>
         ) : null}
 
         {entries.map((entry) => {
@@ -535,6 +736,12 @@ export default function FilePanel({ connectionId, compact = false }: FilePanelPr
               );
             })}
           </ul>
+        </div>
+      ) : null}
+
+      {dragOver ? (
+        <div className="files-drop">
+          <span className="files-drop__text">松手即上传到 {path}</span>
         </div>
       ) : null}
 

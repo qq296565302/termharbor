@@ -7,12 +7,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
+import { EMPTY_LINE, feedLine, parseCd } from "../lib/shell";
 import { nextTabId } from "../lib/tabs";
 import SnippetPanel from "./SnippetPanel";
 import type { SnippetDto } from "../lib/types";
 
 /** 插入时只关心名称和风险，不需要整条片段 */
 type SnippetMeta = Pick<SnippetDto, "name" | "risk">;
+
 import type {
   ConnectionDto,
   DiagKind,
@@ -29,6 +31,14 @@ import { useSessionStore, type TerminalTab } from "../stores/sessionStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useUiStore } from "../stores/uiStore";
 
+/**
+ * 一次性提示的存活时长。
+ *
+ * 主出口是「按回车」—— 那时命令真的发出去了，提示的使命结束；
+ * 定时器只是兜底，防止用户不回车（改主意、直接切走）时那行字一直挂在窗口底部。
+ */
+const NOTICE_TTL_MS = 20_000;
+
 
 /**
  * 每个标签页一个终端实例。切换标签只切可见性，绝不销毁 —— 销毁会丢回滚缓冲。
@@ -40,11 +50,17 @@ function TerminalView({
   tab,
   active,
   focusTick,
+  onEnter,
+  onCommandLine,
 }: {
   tab: TerminalTab;
   active: boolean;
   /** 父组件插入片段后 +1，用来把焦点还给终端 */
   focusTick: number;
+  /** 用户在终端里按了回车（真正提交了这行命令） */
+  onEnter?: () => void;
+  /** 用户敲完并回车的一整行命令（用来识别 cd，让文件面板跟着走） */
+  onCommandLine?: (line: string) => void;
 }) {
   const fontSize = useSettingsStore((state) => state.settings.fontSize);
   const themeName = useSettingsStore((state) => state.settings.theme);
@@ -55,6 +71,25 @@ function TerminalView({
   const termRef = useRef<Terminal | null>(null);
   const sessionRef = useRef<string | null>(null);
   const reconnectRef = useRef<(() => void) | null>(null);
+  /**
+   * 回车回调走 ref 而不是进 effect 依赖：
+   * 主 effect 的依赖一旦变化就会重建终端，而那会丢掉回滚缓冲。
+   */
+  const onEnterRef = useRef(onEnter);
+  const onCommandLineRef = useRef(onCommandLine);
+  /**
+   * 正在输入的这一行。
+   *
+   * 只用来识别 `cd` —— SSH 里拿不到对端 shell 的当前目录（拿不到 pid，
+   * OSC 7 又要用户自己配 rc），所以从"用户敲了什么"这条唯一可见的线索反推。
+   */
+  const lineRef = useRef(EMPTY_LINE);
+
+  useEffect(() => {
+    onEnterRef.current = onEnter;
+    onCommandLineRef.current = onCommandLine;
+  }, [onEnter, onCommandLine]);
+
   /** 选中文字后浮出的复制按钮。坐标相对 `.term-host`。 */
   const [copyHint, setCopyHint] = useState<{
     x: number;
@@ -150,6 +185,17 @@ function TerminalView({
     startSession();
 
     const dataSub = term.onData((data) => {
+      // 回车 = 用户真的把这行发出去了：插入片段时留的「还没运行」提示到这里就该收，
+      // 同时把这一行交给上层识别 cd
+      const fed = feedLine(lineRef.current, data);
+      lineRef.current = fed.state;
+      if (fed.submitted.length > 0) {
+        onEnterRef.current?.();
+        for (const line of fed.submitted) {
+          if (line) onCommandLineRef.current?.(line);
+        }
+      }
+
       const id = sessionRef.current;
       if (id) void call("session_write", { sessionId: id, data }).catch(() => undefined);
     });
@@ -386,6 +432,15 @@ export default function TerminalPage() {
   /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
   const [filePanels, setFilePanels] = useState<string[]>([]);
   /**
+   * 每个标签最近一次 `cd` 的参数，喂给对应的文件面板。
+   *
+   * 只有真的认出 cd 才更新 state —— 否则每敲一条命令整个终端页都要重渲染一遍。
+   */
+  const [cdTargets, setCdTargets] = useState<
+    Record<string, { seq: number; target: string }>
+  >({});
+  const cdSeq = useRef(0);
+  /**
    * 文件面板宽度。
    *
    * 左右拖动分隔条改，值存在 localStorage —— 这是纯 UI 偏好，
@@ -403,7 +458,14 @@ export default function TerminalPage() {
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   /** 插入片段后 +1，让终端重新拿回焦点 */
   const [focusTick, setFocusTick] = useState(0);
-  const [snippetNotice, setSnippetNotice] = useState<string | null>(null);
+  /**
+   * 一次性提示（插入片段、没连会话之类）。
+   *
+   * 带 `seq` 是因为「同一句话再说一遍」也要重新计时：只比字符串的话，
+   * 连着插两次同一个高危片段，第二次不会重置定时器。
+   */
+  const [notice, setNotice] = useState<{ text: string; seq: number } | null>(null);
+  const noticeSeq = useRef(0);
   /** 正在重命名的标签（双击标题进入） */
   const [editingTab, setEditingTab] = useState<string | null>(null);
   const [tabDraft, setTabDraft] = useState("");
@@ -415,6 +477,43 @@ export default function TerminalPage() {
     error: string | null;
     result: DiagResult | null;
   } | null>(null);
+
+  /**
+   * 换一句提示 / 收掉提示。
+   *
+   * 每句提示都带一个自增序号，所以「同一句话再来一次」也会重置自动收起的计时器。
+   */
+  const showNotice = useCallback((text: string | null) => {
+    if (text === null) {
+      setNotice(null);
+      return;
+    }
+    noticeSeq.current += 1;
+    setNotice({ text, seq: noticeSeq.current });
+  }, []);
+
+  const clearNotice = useCallback(() => setNotice(null), []);
+
+  /** 终端里敲完一行：认出 cd 就转给对应标签的文件面板 */
+  const handleCommandLine = useCallback((tabId: string, line: string) => {
+    const target = parseCd(line);
+    if (!target) return;
+
+    cdSeq.current += 1;
+    setCdTargets((prev) => ({ ...prev, [tabId]: { seq: cdSeq.current, target } }));
+  }, []);
+
+  // 到点自动收起。seq 变化会重开计时器，所以连续插入两次不会被前一次的计时器提前清掉。
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_TTL_MS);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  // 换标签就把提示收起来：那条提示说的是上一个标签里插入的命令
+  useEffect(() => {
+    setNotice(null);
+  }, [activeTabId]);
 
   /**
    * 拉取连接列表。
@@ -492,23 +591,21 @@ export default function TerminalPage() {
     const tab = store.tabs.find((item) => item.tabId === store.activeTabId);
 
     if (!tab?.sessionId) {
-      setSnippetNotice("先打开一个终端标签，片段会插入到当前会话");
+      showNotice("先打开一个终端标签，片段会插入到当前会话");
       return;
     }
 
     // 有副作用的命令要明确告诉用户「还没执行」—— 标签上的颜色容易被忽略
     if (snippet.risk === "critical") {
-      setSnippetNotice(
-        `已插入高危命令「${snippet.name}」。它还没运行，请先核对内容再按回车。`,
-      );
+      showNotice(`已插入高危命令「${snippet.name}」。它还没运行，请先核对内容再按回车。`);
     } else if (snippet.risk === "dangerous") {
-      setSnippetNotice(`已插入「${snippet.name}」，按回车执行。`);
+      showNotice(`已插入「${snippet.name}」，按回车执行。`);
     } else {
-      setSnippetNotice(null);
+      showNotice(null);
     }
 
     void call("session_write", { sessionId: tab.sessionId, data: command }).catch((err) => {
-      setSnippetNotice(fromUnknown(err).message);
+      showNotice(fromUnknown(err).message);
     });
     setFocusTick((tick) => tick + 1);
   };
@@ -578,7 +675,7 @@ export default function TerminalPage() {
     const tab = store.tabs.find((item) => item.tabId === store.activeTabId);
 
     if (!tab?.sessionId) {
-      setSnippetNotice("先打开一个终端标签，诊断需要一条已连接的会话");
+      showNotice("先打开一个终端标签，诊断需要一条已连接的会话");
       return;
     }
 
@@ -722,6 +819,9 @@ export default function TerminalPage() {
             + 新连接
           </button>
 
+          {/* 分组：左边是「新建」，右边是三个侧栏开关，中间用一条竖线隔开 */}
+          <span className="term-tabs__divider" />
+
           {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
           <button
             type="button"
@@ -791,6 +891,8 @@ export default function TerminalPage() {
               tab={tab}
               active={tab.tabId === activeTabId}
               focusTick={focusTick}
+              onEnter={clearNotice}
+              onCommandLine={(line) => handleCommandLine(tab.tabId, line)}
             />
           ))}
         </div>
@@ -814,8 +916,14 @@ export default function TerminalPage() {
           />
         ) : null}
 
-        {sidePanel === "files" ? (
-          <aside className="term-files" style={{ width: filesWidth }}>
+        {/* 文件面板一旦为某个标签打开过就**常驻挂载**，切到片段/负载时只隐藏。
+            原来这里是 `sidePanel === "files" ? ... : null`，切走即卸载 ——
+            而 FilePanel 卸载时会关掉自己的 SFTP 会话，于是每次点回来都要重连一遍。 */}
+        {filePanels.length > 0 ? (
+          <aside
+            className="term-files"
+            style={{ width: filesWidth, display: sidePanel === "files" ? undefined : "none" }}
+          >
             <div
               className="term-files__grip"
               title="拖动调整宽度，双击复位"
@@ -833,7 +941,7 @@ export default function TerminalPage() {
               <button
                 type="button"
                 className="term-files__close"
-                title="关闭文件面板（SFTP 连接会一起关掉）"
+                title="收起文件面板（连接保留，下次打开不用重连；要断开请点面板里的「断开」）"
                 onClick={() => setSidePanel(null)}
               >
                 ×
@@ -850,7 +958,11 @@ export default function TerminalPage() {
                     className="term-files__slot"
                     hidden={tabId !== activeTabId}
                   >
-                    <FilePanel connectionId={tab.connectionId} compact />
+                    <FilePanel
+                      connectionId={tab.connectionId}
+                      compact
+                      cdTarget={cdTargets[tabId] ?? null}
+                    />
                   </div>
                 );
               })}
@@ -859,7 +971,20 @@ export default function TerminalPage() {
         ) : null}
       </div>
 
-      {snippetNotice ? <p className="term-notice">{snippetNotice}</p> : null}
+      {notice ? (
+        <p className="term-notice" role="status">
+          <span className="term-notice__text">{notice.text}</span>
+          <button
+            type="button"
+            className="term-notice__close"
+            title="收起提示"
+            aria-label="收起提示"
+            onClick={clearNotice}
+          >
+            ×
+          </button>
+        </p>
+      ) : null}
 
       <div className="term-hintbar">
         <span>Ctrl+Shift+T 新建</span>
