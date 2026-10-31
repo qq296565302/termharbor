@@ -372,10 +372,18 @@ xterm.js 只能显示纯文本流。要在 Windows 上舒服用，把 sshd 的�
 
 已知未做（都不在当前威胁模型里，但记在这里免得被当成"已经安全"）：
 
-- Windows 上的密钥文件没有绑定 DPAPI，只靠用户目录 ACL
-- `devfile` 密钥是明文文件（开发专用，设置页会显示密钥来源，日志有 warn）
-- 没有自动更新，所以也不存在更新包签名问题（M5 待做）
-- `trust_fingerprint` 仍由前端传入——这是 TOFU 首次信任的实现方式，配合 CSP 与零注入点，风险可接受
+- **主密码（S-05）只有 KDF 没有入口**：`crypto/kdf.rs` 的 Argon2id 参数化实现是完整的
+  （OWASP 2024 下限 19MiB/t=2/p=1，参数随记录落库以便逐条升级），
+  `KeySource::MasterPassword` 这个枚举值也在，但**没有任何 provider 实现它**，
+  也没有设置主密码的界面。当前默认走系统钥匙串（Windows 凭据管理器 / macOS Keychain /
+  Linux Secret Service），密钥由操作系统用用户登录凭据保护。
+- `devfile` 密钥是明文文件：只在 `TERMHARBOR_KEY_PROVIDER=devfile` 或构建时
+  `--no-default-features` 关掉钥匙串时才会走到。日志有 warn，设置页/关于页会显示密钥来源。
+- 没有自动更新（`tauri-plugin-updater` 未引入），所以也不存在更新包签名问题；
+  代价是用户升级要手动装包（M5 待做）。引入时必须同时做签名密钥管理与清单校验。
+- `trust_fingerprint` 仍由前端传入——这是 TOFU 首次信任的实现方式：
+  后端只校验"你传的指纹 == 服务器实际给的指纹"，无法证明**人**看过这个指纹。
+  配合 CSP、零注入点、指纹变更阻断，风险可接受；要更强需要主密码那套（见下）。
 
 ## 页面结构
 
