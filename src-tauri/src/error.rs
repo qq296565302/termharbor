@@ -40,6 +40,8 @@ pub enum ErrCode {
     StorageError,
     // ---- 通用
     ValidationError,
+    /// 检查更新走的是外网（api.github.com），失败原因多半是网络而不是代码
+    UpdateCheckFailed,
     Internal,
 }
 
@@ -63,6 +65,7 @@ impl ErrCode {
             ErrCode::ConnectionNotFound => "连接配置不存在",
             ErrCode::StorageError => "本地数据读写失败",
             ErrCode::ValidationError => "输入内容不合法",
+            ErrCode::UpdateCheckFailed => "检查更新失败，请确认网络能访问 GitHub",
             ErrCode::Internal => "应用内部错误",
         }
     }
@@ -85,6 +88,7 @@ impl ErrCode {
             ErrCode::ConnectionNotFound => "CONNECTION_NOT_FOUND",
             ErrCode::StorageError => "STORAGE_ERROR",
             ErrCode::ValidationError => "VALIDATION_ERROR",
+            ErrCode::UpdateCheckFailed => "UPDATE_CHECK_FAILED",
             ErrCode::Internal => "INTERNAL",
         }
     }

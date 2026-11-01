@@ -1,9 +1,26 @@
+import { useState } from "react";
+
+import { fromUnknown } from "../lib/errors";
+import { call } from "../lib/ipc";
 import { keySourceLabel } from "../lib/labels";
-import type { Pong } from "../lib/types";
+import type { Pong, UpdateStatus } from "../lib/types";
 
 interface Props {
   pong: Pong | null;
 }
+
+/**
+ * 检查更新的界面状态。
+ *
+ * 只到"告诉你有没有新版"为止，不下载也不安装 —— 更新包没有代码签名时，
+ * 静默安装会被 SmartScreen 拦，那反而比手动下载更糟。
+ */
+type CheckState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "latest"; version: string }
+  | { kind: "available"; status: UpdateStatus }
+  | { kind: "error"; message: string };
 
 /** 依赖清单。协议是核对过各自 Cargo.toml / package.json 的，不是凭印象写的。 */
 const COMPONENTS = [
@@ -18,7 +35,57 @@ const COMPONENTS = [
   { name: "Serde", license: "Apache-2.0 OR MIT", usage: "序列化" },
 ];
 
+/** 把检查结果翻成一句话。状态机在外面，文案只在这里维护。 */
+function describeCheck(state: CheckState): string {
+  switch (state.kind) {
+    case "idle":
+      return "还没检查过。";
+    case "checking":
+      return "正在向 GitHub 查询…";
+    case "latest":
+      return `已是最新版本（v${state.version}）。`;
+    case "available": {
+      const { latest, publishedAt } = state.status;
+      const when = formatDate(publishedAt);
+      return `发现新版本 v${latest}${when ? `（发布于 ${when}）` : ""}。`;
+    }
+    case "error":
+      return state.message;
+  }
+}
+
+/** 2026-11-02T10:00:00Z → 2026-11-02（本地时区）。解析不出来就不显示。 */
+function formatDate(raw: string | null): string | null {
+  if (!raw) return null;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 export default function AboutPage({ pong }: Props) {
+  const [check, setCheck] = useState<CheckState>({ kind: "idle" });
+
+  const runCheck = async () => {
+    setCheck({ kind: "checking" });
+    try {
+      const status = await call<UpdateStatus>("update_check");
+      if (status.hasUpdate && status.latest) {
+        setCheck({ kind: "available", status });
+      } else {
+        // 远端没发过 release 时 latest 是 null，这时也算"已是最新"，
+        // 不必让用户分清"没有新版"和"还没发布"
+        setCheck({ kind: "latest", version: status.latest ?? status.current });
+      }
+    } catch (err) {
+      setCheck({ kind: "error", message: fromUnknown(err).message });
+    }
+  };
+
+  const openPage = () => {
+    void call<void>("update_open_page").catch(() => undefined);
+  };
+
   return (
     <div className="about-page">
       <header className="about__brand">
@@ -70,6 +137,31 @@ export default function AboutPage({ pong }: Props) {
         <p className="about__hint">
           凭据以 AES-256-GCM 加密后存在数据目录的 SQLite 里，密钥在系统钥匙串；
           日志里的敏感字段在写入前已脱敏。
+        </p>
+      </section>
+
+      <section className="about__section">
+        <h3>更新</h3>
+        <div className="about__update">
+          <span className="about__update-text">{describeCheck(check)}</span>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={check.kind === "checking"}
+            onClick={() => void runCheck()}
+          >
+            {check.kind === "checking" ? "检查中…" : "检查更新"}
+          </button>
+          {check.kind === "available" ? (
+            <button type="button" className="btn btn--primary btn--sm" onClick={openPage}>
+              打开下载页
+            </button>
+          ) : null}
+        </div>
+        <p className="about__hint">
+          检查会请求 GitHub 的 releases 接口，只比对版本号，不上传任何信息。
+          没有自动下载/静默安装 —— 安装包还没做代码签名，静默装会被 SmartScreen 拦。
+          网络连不上 GitHub 时这里会直接报错，不影响其它功能。
         </p>
       </section>
 

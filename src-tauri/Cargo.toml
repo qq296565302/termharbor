@@ -1,6 +1,6 @@
 [package]
 name = "termharbor"
-version = "0.1.15"
+version = "0.1.16"
 description = "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理客户端"
 authors = ["TermHarbor"]
 edition = "2021"
@@ -38,6 +38,12 @@ uuid = { version = "1.20.0", features = ["v7"] }
 tauri-plugin-dialog = "2.7.3"
 russh-sftp = "3.0.1"
 tokio-util = { version = "0.7.19", features = ["rt"] }
+# 只有"检查更新"用得上。关掉默认特性走 rustls，避免在 Windows 上再链一层 native-tls；
+# rustls 默认的 aws-lc-rs 提供者与 russh 用的是同一个，不额外引入加密库。
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
 
 [features]
 default = ["keychain"]

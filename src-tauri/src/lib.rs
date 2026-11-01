@@ -17,6 +17,7 @@ pub mod snippets;
 pub mod ssh;
 pub mod state;
 pub mod storage;
+pub mod update;
 
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
@@ -168,6 +169,8 @@ pub fn run() {
             commands::diag::load_snapshot,
             commands::config_io::config_export,
             commands::config_io::config_import,
+            commands::update::update_check,
+            commands::update::update_open_page,
             commands::settings::settings_get,
             commands::settings::settings_update,
         ])

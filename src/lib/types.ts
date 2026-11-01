@@ -14,6 +14,16 @@ export interface Pong {
   serverTime: number;
 }
 
+/** 对应 `commands/update.rs::UpdateStatus` */
+export interface UpdateStatus {
+  /** 当前运行版本（来自安装包） */
+  current: string;
+  /** 远端最新版本；仓库还没发过 release 时为 null */
+  latest: string | null;
+  hasUpdate: boolean;
+  publishedAt: string | null;
+}
+
 /** 对应 `commands/system.rs::Heartbeat` */
 export interface Heartbeat {
   tick: number;

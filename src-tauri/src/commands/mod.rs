@@ -13,3 +13,4 @@ pub mod sftp;
 pub mod snippets;
 pub mod system;
 pub mod terminal;
+pub mod update;

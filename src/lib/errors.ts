@@ -26,6 +26,7 @@ export const ERR_CODES = [
   "STORAGE_ERROR",
   // 通用
   "VALIDATION_ERROR",
+  "UPDATE_CHECK_FAILED",
   "INTERNAL",
   "UNKNOWN",
 ] as const;
@@ -49,6 +50,7 @@ export const ERROR_MESSAGES: Record<ErrCode, string> = {
   CONNECTION_NOT_FOUND: "连接配置不存在",
   STORAGE_ERROR: "本地数据读写失败",
   VALIDATION_ERROR: "输入内容不合法",
+  UPDATE_CHECK_FAILED: "检查更新失败，请确认网络能访问 GitHub",
   INTERNAL: "应用内部错误",
   UNKNOWN: "发生未知错误",
 };

@@ -523,6 +523,24 @@ pnpm tauri build --bundles nsis   # Windows 安装包，约 3 分钟（增量）
 > 注意：Windows 未签名，SmartScreen 会提示"未知发布者"，需要点「更多信息 → 仍要运行」。
 > 安装界面为简体中文（`bundle.windows.nsis.languages = ["SimpChinese"]`）。
 
+### 发版：打 tag 出包
+
+`release.yml` 监听 `v*` 标签：三处版本号一致 + tag 等于版本号 → 构建 NSIS → 发布到 GitHub Releases
+（自动生成 release notes）。手动 `workflow_dispatch` 只构建、传 artifact，不发 Release。
+
+```bash
+# 改完三处 version（package.json / tauri.conf.json / Cargo.toml）后
+git commit -am "chore(release): 0.1.16"
+git tag v0.1.16
+git push && git push --tags
+```
+
+**刻意没做自动更新**：更新包没有代码签名时，静默安装会被 SmartScreen 拦，
+"全自动更新"实际会变成"自动失败"。现在就一个「关于 → 检查更新」：查
+`api.github.com/.../releases/latest` 比对版本号（按数字比，不是按字符串），
+有新版就提示并打开下载页，不下载、不安装。等签名落地再上 `tauri-plugin-updater`
+和 minisign（见开发计划 R-2 / R-3）。
+
 ### 图标：ICO 里小尺寸不能是 PNG
 
 任务栏图标走的是「exe 内嵌图标资源」这条路（`tao` 只显式设了窗口小图标，
