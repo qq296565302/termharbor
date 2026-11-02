@@ -562,10 +562,47 @@ python scripts/make-ico.py --check   # 打印每个条目是 PNG 还是 DIB
 顺带把 `bundle.icon` 里的 `icons/icon.ico` 保持在列表内，`tauri-build` 就是拿它写进 exe 资源的。
 
 
+## MCP（给智能体用的只读入口，开发中）
+
+目标：让 AI 客户端（Claude Desktop / WorkBuddy 等）**通过本客户端**看服务器，
+而不是把 SSH 密码或私钥交给它。凭据始终留在 TermHarbor 里。
+
+形态是独立的无头二进制 `termharbor-mcp`，走 stdio + JSON-RPC 2.0（MCP 协议），
+复用 `storage` / `crypto` / `ssh` / `sftp` —— 这几层本来就不依赖 Tauri，所以不需要 IPC 桥，
+主程序开不开都能用。计划与红线见 [docs/开发计划.md](docs/开发计划.md) §17。
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml --bin termharbor-mcp
+```
+
+宿主配置（示例，路径按实际填）：
+
+```json
+{
+  "mcpServers": {
+    "termharbor": { "command": "D:\\KaKaRoot\\TermHarbor终端港\\src-tauri\\target\\release\\termharbor-mcp.exe" }
+  }
+}
+```
+
+**当前进度**：协议链路已通（`initialize` / `ping` / `tools/list` / `tools/call`），
+`tools/list` 能列出 `list_connections` / `sftp_list` / `load_snapshot` 三个**只读**工具，
+但它们的实现还没接上（调用会返回"尚未实现"）。可以这样自测：
+
+```bash
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
+              '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | ./src-tauri/target/debug/termharbor-mcp.exe
+```
+
+调试提醒：**stdout 只走协议帧**，日志一律 stderr。混进去一行，宿主那边就是
+"连接成功但一个工具都看不到"。
+
 ## 下一步
 
 M3、M6、诊断面板、设置页、关于页已完成，Windows 安装包能出。剩下：
 
+- **M8 MCP**：只读三工具的实现（见 §17.7 第 2 步）
 - **M4 监控、设置与打磨**：`/proc` 只读采集、设置页（字体/字号/主题/回滚行数）、关于页、错误文案全覆盖
 - **M7 剩余**：变量占位符 `{port}`、执行前预览与二次确认
 - **M5 剩余**：macOS dmg / Linux AppImage+deb、代码签名、三平台回归清单

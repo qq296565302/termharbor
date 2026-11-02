@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod error;
 pub mod events;
 pub mod logging;
+pub mod mcp;
 pub mod monitor;
 pub mod redact;
 pub mod sftp;
