@@ -75,6 +75,18 @@ pub fn run() {
                 "TermHarbor 启动"
             );
 
+            // 0.1.16 及更早把快照目录算错了一层，落在了 app_data_dir 里面 ——
+            // 那正好是卸载器 `RmDir /r` 会删掉的目录，安全网形同虚设。
+            // 这里做一次性搬迁，必须在快照与恢复之前。
+            match crate::storage::backup::migrate_legacy(
+                &crate::storage::backup::legacy_dir(&paths.data_dir),
+                &paths.backup_dir,
+            ) {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(count, "已把老位置的快照搬到新目录"),
+                Err(err) => tracing::warn!(error = %err, "搬迁老快照失败，先继续启动"),
+            }
+
             // 有待恢复的快照就先换上去（用户在上次会话里点了「恢复」）。
             // 必须在 Db::open 之前：换文件时不能有连接开着。
             match crate::storage::backup::apply_pending_restore(&paths.db_file, &paths.backup_dir) {

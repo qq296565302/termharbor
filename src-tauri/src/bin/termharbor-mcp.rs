@@ -18,10 +18,25 @@
 
 use std::io::{self, BufRead, Write};
 
-use termharbor_lib::mcp::Server;
+use termharbor_lib::mcp::{Context, Server};
 
-fn main() {
-    let server = Server::new();
+#[tokio::main]
+async fn main() {
+    // 路径算不出来（APPDATA 缺失之类）就直说，别让宿主看到"进程退出了但没原因"
+    let ctx = match Context::new() {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            eprintln!("[termharbor-mcp] 初始化失败: {err}");
+            std::process::exit(2);
+        }
+    };
+
+    eprintln!(
+        "[termharbor-mcp] 启动，数据目录 {}",
+        ctx.paths().data_dir.display()
+    );
+
+    let server = Server::new(ctx);
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
 
@@ -31,7 +46,7 @@ fn main() {
             break;
         };
 
-        let Some(response) = server.handle_line(&line) else {
+        let Some(response) = server.handle_line(&line).await else {
             continue;
         };
 

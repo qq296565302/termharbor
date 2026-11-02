@@ -10,8 +10,10 @@
 //! **stdout 是协议通道**：任何日志、调试输出都必须走 stderr，否则宿主收到的就是一堆
 //! 无法解析的行，症状是"连上了但工具全都不见了"。
 
+pub mod context;
 pub mod jsonrpc;
 pub mod server;
 pub mod tools;
 
+pub use context::Context;
 pub use server::Server;

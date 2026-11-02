@@ -585,13 +585,15 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin termharbor-mcp
 }
 ```
 
-**当前进度**：协议链路已通（`initialize` / `ping` / `tools/list` / `tools/call`），
-`tools/list` 能列出 `list_connections` / `sftp_list` / `load_snapshot` 三个**只读**工具，
-但它们的实现还没接上（调用会返回"尚未实现"）。可以这样自测：
+**当前进度**：协议链路 + 两个工具的实现已通。`list_connections` 读本地配置库
+（不解密任何凭据），`sftp_list` 真连一次服务器列目录后立刻断开（复用 GUI 的
+`prepare_probe`，所以凭据解密、known_hosts 校验是同一套策略）。`load_snapshot` 还没接。
+密钥**用到才取**：只列连接不会去碰系统凭据管理器。可以这样自测：
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
               '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+              '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}' \
   | ./src-tauri/target/debug/termharbor-mcp.exe
 ```
 

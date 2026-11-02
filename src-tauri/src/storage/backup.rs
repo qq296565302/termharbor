@@ -224,6 +224,46 @@ fn count_connections(path: &Path) -> Option<usize> {
     .map(|value| value.max(0) as usize)
 }
 
+/// 老版本错放的快照目录：`<app_data_dir>/TermHarbor/backups`。
+///
+/// 0.1.16 及更早把 `dir()` 喂成了 `app_data_dir`，于是快照多套了一层，正好落进
+/// 卸载器的 `RmDir /r "$APPDATA\com.termharbor.app"` 里 —— 安全网失效。
+pub fn legacy_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("TermHarbor").join("backups")
+}
+
+/// 把老位置的快照搬到正确位置。返回搬走的份数。
+///
+/// 只搬 `termharbor-*.db`，顺带丢掉同名的 `-wal` / `-shm`（那是旧库的残留，
+/// 单独拷过去反而会让 sqlite 读到过期页）。搬不动就算了，不阻断启动。
+pub fn migrate_legacy(legacy: &Path, target: &Path) -> AppResult<usize> {
+    if !legacy.exists() || legacy == target {
+        return Ok(0);
+    }
+
+    let mut moved = 0usize;
+    let entries = std::fs::read_dir(legacy)?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !path.is_file() || !name.starts_with(PREFIX) || !name.ends_with(".db") {
+            continue;
+        }
+
+        std::fs::create_dir_all(target)?;
+        let destination = target.join(&name);
+        if std::fs::rename(&path, &destination).is_ok()
+            || (std::fs::copy(&path, &destination).is_ok() && std::fs::remove_file(&path).is_ok())
+        {
+            moved += 1;
+        }
+    }
+
+    // 目录空了就一起收掉，不留一个看起来像"备份"的空壳
+    let _ = std::fs::remove_dir_all(legacy);
+    Ok(moved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +453,45 @@ mod tests {
 
         assert!(!PathBuf::from(format!("{}-wal", db.display())).exists());
         assert!(!PathBuf::from(format!("{}-shm", db.display())).exists());
+    }
+
+    /// 0.1.16 及更早把快照放错了层，搬过去之后老目录不该再留下"看起来像备份"的空壳。
+    #[test]
+    fn legacy_snapshots_are_moved_out_of_the_bundle_dir() {
+        let data_dir = temp_dir("legacy");
+        let legacy = legacy_dir(&data_dir);
+        let target = data_dir.parent().unwrap().join("TermHarbor-backups-test");
+        let _ = std::fs::remove_dir_all(&target);
+
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("termharbor-111.db"), b"snapshot").unwrap();
+        std::fs::write(legacy.join("termharbor-111.db-wal"), b"stale").unwrap();
+        std::fs::write(legacy.join("unrelated.txt"), b"x").unwrap();
+
+        let moved = migrate_legacy(&legacy, &target).unwrap();
+
+        assert_eq!(moved, 1, "只搬 termharbor-*.db");
+        assert!(target.join("termharbor-111.db").exists());
+        assert_eq!(
+            std::fs::read(target.join("termharbor-111.db")).unwrap(),
+            b"snapshot"
+        );
+        assert!(
+            !target.join("termharbor-111.db-wal").exists(),
+            "过期 WAL 不能跟着搬，会让 sqlite 读到旧页"
+        );
+        assert!(!legacy.exists(), "搬完要把老目录收掉");
+
+        let _ = std::fs::remove_dir_all(&target);
+    }
+
+    #[test]
+    fn migrate_is_a_no_op_when_nothing_ran_away() {
+        let dir = temp_dir("legacy-empty");
+        assert_eq!(
+            migrate_legacy(&dir.join("nope"), &dir.join("target")).unwrap(),
+            0
+        );
+        assert!(!dir.join("target").exists(), "没有东西可搬时不该建空目录");
     }
 }

@@ -5,6 +5,7 @@
 
 use serde_json::{json, Value};
 
+use super::context::Context;
 use super::jsonrpc::{Request, Response, INVALID_PARAMS, METHOD_NOT_FOUND};
 use super::tools;
 
@@ -20,26 +21,22 @@ const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连�
 不会也不能返回密码、私钥或主机指纹。";
 
 pub struct Server {
+    ctx: Context,
     name: &'static str,
     version: &'static str,
 }
 
-impl Default for Server {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(ctx: Context) -> Self {
         Self {
+            ctx,
             name: "termharbor",
             version: env!("CARGO_PKG_VERSION"),
         }
     }
 
     /// 处理一行。返回 `None` 表示这是通知，不需要回包。
-    pub fn handle_line(&self, raw: &str) -> Option<String> {
+    pub async fn handle_line(&self, raw: &str) -> Option<String> {
         let line = raw.trim();
         if line.is_empty() {
             return None;
@@ -60,7 +57,7 @@ impl Server {
             "initialize" => Response::ok(id, self.initialize(request.params.as_ref())),
             "ping" => Response::ok(id, json!({})),
             "tools/list" => Response::ok(id, json!({ "tools": tools::list() })),
-            "tools/call" => match self.call_tool(request.params.as_ref()) {
+            "tools/call" => match self.call_tool(request.params.as_ref()).await {
                 Ok(result) => Response::ok(id, result),
                 Err(err) => Response::from_error(id, err),
             },
@@ -91,7 +88,7 @@ impl Server {
         })
     }
 
-    fn call_tool(&self, params: Option<&Value>) -> Result<Value, super::jsonrpc::RpcError> {
+    async fn call_tool(&self, params: Option<&Value>) -> Result<Value, super::jsonrpc::RpcError> {
         let params = params.ok_or_else(|| {
             super::jsonrpc::RpcError::new(INVALID_PARAMS, "tools/call 需要 params")
         })?;
@@ -101,7 +98,7 @@ impl Server {
             .and_then(Value::as_str)
             .ok_or_else(|| super::jsonrpc::RpcError::new(INVALID_PARAMS, "缺少工具名 name"))?;
 
-        tools::call(name, params.get("arguments"))
+        tools::call(&self.ctx, name, params.get("arguments")).await
     }
 }
 
@@ -109,18 +106,26 @@ impl Server {
 mod tests {
     use super::*;
 
-    fn call(server: &Server, line: &str) -> Value {
-        let out = server.handle_line(line).expect("这条该有回包");
+    fn server() -> Server {
+        let dir =
+            std::env::temp_dir().join(format!("termharbor-mcp-server-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        Server::new(Context::for_tests(dir))
+    }
+
+    async fn call(server: &Server, line: &str) -> Value {
+        let out = server.handle_line(line).await.expect("这条该有回包");
         serde_json::from_str(&out).expect("回包必须是合法 JSON")
     }
 
-    #[test]
-    fn initialize_echoes_supported_version() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn initialize_echoes_supported_version() {
         let value = call(
-            &server,
+            &server(),
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#,
-        );
+        )
+        .await;
 
         assert_eq!(value["id"], 1);
         assert_eq!(value["result"]["protocolVersion"], "2024-11-05");
@@ -135,31 +140,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unknown_protocol_version_falls_back_to_newest() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn unknown_protocol_version_falls_back_to_newest() {
         let value = call(
-            &server,
+            &server(),
             r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#,
-        );
+        )
+        .await;
         assert_eq!(value["result"]["protocolVersion"], SUPPORTED_VERSIONS[0]);
     }
 
-    #[test]
-    fn notifications_get_no_response() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn notifications_get_no_response() {
         assert!(
-            server
+            server()
                 .handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .await
                 .is_none(),
             "通知不能回包"
         );
     }
 
-    #[test]
-    fn tools_list_returns_three_tools() {
-        let server = Server::new();
-        let value = call(&server, r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#);
+    #[tokio::test]
+    async fn tools_list_returns_three_tools() {
+        let value = call(
+            &server(),
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#,
+        )
+        .await;
         let tools = value["result"]["tools"]
             .as_array()
             .expect("要有 tools 数组");
@@ -168,24 +176,28 @@ mod tests {
         assert!(tools[0]["inputSchema"]["type"] == "object");
     }
 
-    #[test]
-    fn tools_call_known_tool_returns_content() {
-        let server = Server::new();
+    /// `list_connections` 是唯一一个不碰 SSH 的实现，端到端跑一遍：
+    /// 空库应当回一个空数组，而且**不是**错误。
+    #[tokio::test]
+    async fn list_connections_on_empty_db_returns_empty_array() {
         let value = call(
-            &server,
+            &server(),
             r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}"#,
-        );
-        assert_eq!(value["result"]["isError"], true);
-        assert_eq!(value["result"]["content"][0]["type"], "text");
+        )
+        .await;
+
+        assert_eq!(value["result"]["isError"], false, "空库不是错误：{value}");
+        let body = value["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(body.trim(), "[]", "空库应回空数组，实际：{body}");
     }
 
-    #[test]
-    fn tools_call_unknown_tool_is_invalid_params() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn tools_call_unknown_tool_is_invalid_params() {
         let value = call(
-            &server,
+            &server(),
             r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"nope"}}"#,
-        );
+        )
+        .await;
         assert_eq!(value["error"]["code"], INVALID_PARAMS);
         // 错误响应不能带 result（哪怕是 null）：规范要求二者互斥，严格的宿主会判协议错误
         assert!(
@@ -194,48 +206,59 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tools_call_without_params_is_invalid_params() {
-        let server = Server::new();
-        let value = call(&server, r#"{"jsonrpc":"2.0","id":6,"method":"tools/call"}"#);
+    /// 参数缺失属于"你调错了"，走协议错误，不是执行失败。
+    #[tokio::test]
+    async fn sftp_list_without_arguments_is_invalid_params() {
+        let value = call(
+            &server(),
+            r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"sftp_list","arguments":{"connection":"x"}}}"#,
+        )
+        .await;
         assert_eq!(value["error"]["code"], INVALID_PARAMS);
     }
 
-    #[test]
-    fn unknown_method_is_method_not_found() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn tools_call_without_params_is_invalid_params() {
         let value = call(
-            &server,
-            r#"{"jsonrpc":"2.0","id":7,"method":"resources/list"}"#,
-        );
+            &server(),
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call"}"#,
+        )
+        .await;
+        assert_eq!(value["error"]["code"], INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn unknown_method_is_method_not_found() {
+        let value = call(
+            &server(),
+            r#"{"jsonrpc":"2.0","id":8,"method":"resources/list"}"#,
+        )
+        .await;
         assert_eq!(value["error"]["code"], METHOD_NOT_FOUND);
     }
 
-    #[test]
-    fn broken_json_reports_parse_error_with_null_id() {
-        let server = Server::new();
-        let value = call(&server, "{not json");
+    #[tokio::test]
+    async fn broken_json_reports_parse_error_with_null_id() {
+        let value = call(&server(), "{not json").await;
         assert_eq!(value["error"]["code"], super::super::jsonrpc::PARSE_ERROR);
         assert!(value["id"].is_null());
     }
 
-    #[test]
-    fn empty_input_is_ignored() {
-        let server = Server::new();
-        assert!(server.handle_line("   ").is_none());
+    #[tokio::test]
+    async fn empty_input_is_ignored() {
+        assert!(server().handle_line("   ").await.is_none());
     }
 
-    #[test]
-    fn ping_replies_with_empty_object() {
-        let server = Server::new();
-        let value = call(&server, r#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#);
+    #[tokio::test]
+    async fn ping_replies_with_empty_object() {
+        let value = call(&server(), r#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#).await;
         assert_eq!(value["result"], json!({}));
     }
 
     /// 端到端：把"宿主会发的那几行"按顺序喂进去，回包必须都能往回解析。
-    #[test]
-    fn full_handshake_then_list() {
-        let server = Server::new();
+    #[tokio::test]
+    async fn full_handshake_then_list() {
+        let server = server();
         let lines = [
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
@@ -244,7 +267,7 @@ mod tests {
 
         let mut replies = Vec::new();
         for line in lines {
-            if let Some(out) = server.handle_line(line) {
+            if let Some(out) = server.handle_line(line).await {
                 replies.push(out);
             }
         }

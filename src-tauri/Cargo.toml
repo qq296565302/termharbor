@@ -1,10 +1,13 @@
 [package]
 name = "termharbor"
-version = "0.1.16"
+version = "0.1.17"
 description = "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理客户端"
 authors = ["TermHarbor"]
 edition = "2021"
 rust-version = "1.82"
+# 加了 src/bin/termharbor-mcp.rs 之后包里有两个二进制，tauri CLI 不知道打包哪个，
+# 会直接报 "failed to find main binary"。这一行指明带界面的那个。
+default-run = "termharbor"
 
 [lib]
 name = "termharbor_lib"
