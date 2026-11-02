@@ -10,7 +10,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::jsonrpc::{INVALID_PARAMS, RpcError};
+use super::jsonrpc::{RpcError, INVALID_PARAMS};
 
 /// 工具元信息。
 ///
@@ -160,7 +160,10 @@ mod tests {
     fn unknown_tool_is_an_invalid_params_error() {
         let err = call("rm_rf", None).expect_err("未知工具必须报错");
         assert_eq!(err.code, INVALID_PARAMS);
-        assert!(err.message.contains("sftp_list"), "错误信息里要列出可用工具");
+        assert!(
+            err.message.contains("sftp_list"),
+            "错误信息里要列出可用工具"
+        );
     }
 
     #[test]

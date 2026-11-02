@@ -5,7 +5,7 @@
 
 use serde_json::{json, Value};
 
-use super::jsonrpc::{INVALID_PARAMS, METHOD_NOT_FOUND, Request, Response};
+use super::jsonrpc::{Request, Response, INVALID_PARAMS, METHOD_NOT_FOUND};
 use super::tools;
 
 /// 支持的 MCP 协议版本，新的在前。
@@ -47,7 +47,9 @@ impl Server {
 
         let request: Request = match serde_json::from_str(line) {
             Ok(request) => request,
-            Err(err) => return Some(Response::parse_failed(format!("请求不是合法 JSON: {err}")).to_line()),
+            Err(err) => {
+                return Some(Response::parse_failed(format!("请求不是合法 JSON: {err}")).to_line())
+            }
         };
 
         // 通知：有 method 没 id。规范要求不回包 —— 回了反而会让宿主记一次协议错误。
@@ -125,7 +127,10 @@ mod tests {
         assert_eq!(value["result"]["serverInfo"]["name"], "termharbor");
         assert_eq!(value["result"]["capabilities"]["tools"], json!({}));
         assert!(
-            value["result"]["instructions"].as_str().unwrap().contains("只读"),
+            value["result"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("只读"),
             "开场白里要明确只读，减少模型乱调"
         );
     }
@@ -155,7 +160,9 @@ mod tests {
     fn tools_list_returns_three_tools() {
         let server = Server::new();
         let value = call(&server, r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#);
-        let tools = value["result"]["tools"].as_array().expect("要有 tools 数组");
+        let tools = value["result"]["tools"]
+            .as_array()
+            .expect("要有 tools 数组");
         assert_eq!(tools.len(), 3);
         assert_eq!(tools[0]["name"], "list_connections");
         assert!(tools[0]["inputSchema"]["type"] == "object");
@@ -197,7 +204,10 @@ mod tests {
     #[test]
     fn unknown_method_is_method_not_found() {
         let server = Server::new();
-        let value = call(&server, r#"{"jsonrpc":"2.0","id":7,"method":"resources/list"}"#);
+        let value = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":7,"method":"resources/list"}"#,
+        );
         assert_eq!(value["error"]["code"], METHOD_NOT_FOUND);
     }
 
@@ -240,6 +250,8 @@ mod tests {
         }
 
         assert_eq!(replies.len(), 2, "通知不应产生回包");
-        assert!(replies.iter().all(|out| serde_json::from_str::<Value>(out).is_ok()));
+        assert!(replies
+            .iter()
+            .all(|out| serde_json::from_str::<Value>(out).is_ok()));
     }
 }

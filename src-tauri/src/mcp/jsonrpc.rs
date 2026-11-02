@@ -107,8 +107,9 @@ mod tests {
 
     #[test]
     fn request_without_id_is_a_notification() {
-        let req: Request = serde_json::from_str(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
-            .expect("通知也要能解析");
+        let req: Request =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .expect("通知也要能解析");
         assert!(req.id.is_none());
         assert!(req.params.is_none());
     }
@@ -120,7 +121,10 @@ mod tests {
         assert_eq!(value["jsonrpc"], "2.0");
         assert_eq!(value["id"], 7);
         assert_eq!(value["result"]["ok"], true);
-        assert!(value.get("error").is_none(), "成功响应里不该出现 error 字段");
+        assert!(
+            value.get("error").is_none(),
+            "成功响应里不该出现 error 字段"
+        );
     }
 
     #[test]
@@ -129,12 +133,16 @@ mod tests {
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["error"]["code"], METHOD_NOT_FOUND);
         assert_eq!(value["error"]["message"], "没有这个方法");
-        assert!(value.get("result").is_none(), "错误响应里不该出现 result 字段");
+        assert!(
+            value.get("result").is_none(),
+            "错误响应里不该出现 result 字段"
+        );
     }
 
     #[test]
     fn parse_failure_uses_null_id() {
-        let value: Value = serde_json::from_str(&Response::parse_failed("坏 JSON").to_line()).unwrap();
+        let value: Value =
+            serde_json::from_str(&Response::parse_failed("坏 JSON").to_line()).unwrap();
         assert!(value["id"].is_null(), "解析失败时规范要求 id 为 null");
         assert_eq!(value["error"]["code"], PARSE_ERROR);
     }
