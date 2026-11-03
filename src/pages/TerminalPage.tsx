@@ -257,20 +257,22 @@ function TerminalView({
       if (!event.ctrlKey && !event.metaKey) return true;
 
       if (event.code === "KeyC") {
+        // 顺手挡掉浏览器默认的复制：否则系统剪贴板会被原生路径再写一次
+        event.preventDefault();
         const selection = term.getSelection();
         if (selection) void navigator.clipboard.writeText(selection).catch(() => undefined);
         return false;
       }
-      if (event.code === "KeyV") {
-        void navigator.clipboard
-          .readText()
-          .then((text) => {
-            const id = sessionRef.current;
-            if (id && text) void call("session_write", { sessionId: id, data: text });
-          })
-          .catch(() => undefined);
-        return false;
-      }
+
+      // Ctrl+Shift+V **故意不接管**，交给浏览器原生粘贴。
+      //
+      // 之前这里是自己 readText() 再 session_write。问题是只 return false 拦不住
+      // WebView 的原生粘贴：内容照样被粘进 xterm 的隐藏 textarea，xterm 再通过
+      // onData 发一遍 —— 加上我们自己那一路，同一段内容发两次（"粘一次变两次"）。
+      //
+      // 交给原生还有一个好处：xterm 会在 bracketed paste 模式下自动包 ESC[200~ … ESC[201~，
+      // 多行粘贴不会在 shell 里被逐行立即执行。
+      return true;
       return true;
     });
 
