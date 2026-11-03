@@ -17,3 +17,48 @@ pub mod tools;
 
 pub use context::Context;
 pub use server::Server;
+
+use std::io::{self, BufRead, Write};
+
+/// stdio 主循环。带界面的主程序和独立的 `termharbor-mcp` 都调这一份。
+///
+/// **stdout 只写协议帧**：日志一律 `eprintln!`。混进去一行，宿主那边就是
+/// "连接上了但工具全都不见了"，而且很难排查。
+pub async fn serve_stdio() {
+    // 路径算不出来（APPDATA 缺失之类）就直说，别让宿主看到"进程退出了但没原因"
+    let ctx = match Context::new() {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            eprintln!("[termharbor-mcp] 初始化失败: {err}");
+            return;
+        }
+    };
+
+    eprintln!(
+        "[termharbor-mcp] 启动，数据目录 {}",
+        ctx.paths().data_dir.display()
+    );
+
+    let server = Server::new(ctx);
+    let stdin = io::stdin();
+    let mut stdout = io::stdout().lock();
+
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else {
+            // 读 stdin 出错（一般是宿主关管道），安静退出
+            break;
+        };
+
+        let Some(response) = server.handle_line(&line).await else {
+            continue;
+        };
+
+        if writeln!(stdout, "{response}").is_err() {
+            break;
+        }
+        // 宿主是逐帧读的，不 flush 就会一直等，表现成"程序卡住了"
+        if stdout.flush().is_err() {
+            break;
+        }
+    }
+}

@@ -567,23 +567,26 @@ python scripts/make-ico.py --check   # 打印每个条目是 PNG 还是 DIB
 目标：让 AI 客户端（Claude Desktop / WorkBuddy 等）**通过本客户端**看服务器，
 而不是把 SSH 密码或私钥交给它。凭据始终留在 TermHarbor 里。
 
-形态是独立的无头二进制 `termharbor-mcp`，走 stdio + JSON-RPC 2.0（MCP 协议），
-复用 `storage` / `crypto` / `ssh` / `sftp` —— 这几层本来就不依赖 Tauri，所以不需要 IPC 桥，
-主程序开不开都能用。计划与红线见 [docs/开发计划.md](docs/开发计划.md) §17。
+**不用额外装东西**：装好的主程序自带 `--mcp` 子命令，走 stdio + JSON-RPC 2.0（MCP 协议）。
+这个模式**完全不初始化 Tauri**（不开窗口、不加载 WebView2），但复用 `storage` / `crypto` /
+`ssh` / `sftp` 四层 —— 它们本来就不依赖 Tauri。计划与红线见
+[docs/开发计划.md](docs/开发计划.md) §17。
 
-```bash
-cargo build --manifest-path src-tauri/Cargo.toml --bin termharbor-mcp
-```
-
-宿主配置（示例，路径按实际填）：
+宿主配置（路径就是安装目录里那个 exe）：
 
 ```json
 {
   "mcpServers": {
-    "termharbor": { "command": "D:\\KaKaRoot\\TermHarbor终端港\\src-tauri\\target\\release\\termharbor-mcp.exe" }
+    "termharbor": {
+      "command": "%LOCALAPPDATA%\\TermHarbor\\termharbor.exe",
+      "args": ["--mcp"]
+    }
   }
 }
 ```
+
+> 有些宿主不展开 `%LOCALAPPDATA%`，写全路径即可。排障时也可以用独立的
+> `termharbor-mcp.exe`（`cargo build --bin termharbor-mcp`），它和 `--mcp` 跑的是同一份循环。
 
 **当前进度**：协议链路 + 两个工具的实现已通。`list_connections` 读本地配置库
 （不解密任何凭据），`sftp_list` 真连一次服务器列目录后立刻断开（复用 GUI 的
@@ -594,7 +597,7 @@ cargo build --manifest-path src-tauri/Cargo.toml --bin termharbor-mcp
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \
               '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
               '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}' \
-  | ./src-tauri/target/debug/termharbor-mcp.exe
+  | ./src-tauri/target/debug/termharbor.exe --mcp
 ```
 
 调试提醒：**stdout 只走协议帧**，日志一律 stderr。混进去一行，宿主那边就是

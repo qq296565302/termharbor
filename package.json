@@ -1,7 +1,7 @@
 {
   "name": "termharbor",
   "private": true,
-  "version": "0.1.17",
+  "version": "0.1.18",
   "type": "module",
   "description": "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理桌面客户端",
   "scripts": {
