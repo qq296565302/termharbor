@@ -389,6 +389,29 @@ async fn authenticate_password(
     password: &str,
     host: &str,
 ) -> Result<(), AppError> {
+    // 先用 `none` 探一次：它必然被拒，但拒绝里带着"服务器接受哪些方式"。
+    // 这一步不需要凭据，却能把"到底该用密码还是公钥"从猜变成事实 ——
+    // 排查别人能连我们连不上时，这一行日志比什么都直接。
+    match session.authenticate_none(username.to_string()).await {
+        Ok(client::AuthResult::Failure {
+            remaining_methods, ..
+        }) => {
+            tracing::info!(
+                host,
+                methods = %method_names(&remaining_methods).join(", "),
+                "服务器接受的认证方式"
+            );
+        }
+        Ok(client::AuthResult::Success) => {
+            // 服务器允许无认证直接登录（极少见，通常是没有设密码的测试机）
+            tracing::warn!(host, "服务器允许 none 认证，跳过密码校验");
+            return Ok(());
+        }
+        Err(err) => {
+            tracing::debug!(host, error = %err, "none 探测失败，继续按密码认证");
+        }
+    }
+
     let result = session
         .authenticate_password(username.to_string(), password.to_string())
         .await
@@ -468,17 +491,7 @@ fn finish(result: client::AuthResult) -> Result<(), AppError> {
 /// 不带这句的话，用户只能看到"认证失败，请检查用户名和凭据"，
 /// 而真实原因可能是"这台机器根本不接受密码，只接受公钥"——完全不同的处理方式。
 fn methods_error(remaining: &MethodSet) -> AppError {
-    let names: Vec<&str> = remaining
-        .iter()
-        .filter_map(|kind| match kind {
-            MethodKind::Password => Some("password"),
-            MethodKind::PublicKey => Some("publickey"),
-            MethodKind::KeyboardInteractive => Some("keyboard-interactive"),
-            MethodKind::HostBased => Some("hostbased"),
-            MethodKind::GssapiWithMic => Some("gssapi-with-mic"),
-            MethodKind::None => None,
-        })
-        .collect();
+    let names = method_names(remaining);
 
     if names.is_empty() {
         AppError::new(ErrCode::SshAuthFailed)
@@ -488,6 +501,21 @@ fn methods_error(remaining: &MethodSet) -> AppError {
             format!("认证失败；服务器仍接受的方式：{}", names.join(", ")),
         )
     }
+}
+
+/// `MethodSet` → 给人看的方法名列表。`none` 不是"方式"，滤掉。
+fn method_names(methods: &MethodSet) -> Vec<&'static str> {
+    methods
+        .iter()
+        .filter_map(|kind| match kind {
+            MethodKind::Password => Some("password"),
+            MethodKind::PublicKey => Some("publickey"),
+            MethodKind::KeyboardInteractive => Some("keyboard-interactive"),
+            MethodKind::HostBased => Some("hostbased"),
+            MethodKind::GssapiWithMic => Some("gssapi-with-mic"),
+            MethodKind::None => None,
+        })
+        .collect()
 }
 
 fn map_connect_error(err: &russh::Error) -> AppError {
