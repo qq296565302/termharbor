@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { crumbsOf, formatMode, formatSize, formatSpeed, formatTime } from "./files";
+import {
+  crumbsOf,
+  formatMode,
+  formatSize,
+  formatSpeed,
+  formatTime,
+  validateRename,
+} from "./files";
 
 describe("formatSize", () => {
   it("小于 1KB 直接给字节数", () => {
@@ -77,5 +84,32 @@ describe("formatMode", () => {
 
   it("缺失时给占位符", () => {
     expect(formatMode(null)).toBe("—");
+  });
+});
+
+describe("validateRename", () => {
+  const entry = { name: "a.log", path: "/var/log/a.log" };
+  const siblings = [entry, { name: "b.log", path: "/var/log/b.log" }];
+
+  it("空名字要拦住", () => {
+    expect(validateRename("   ", entry, siblings)).toBe("请输入新名称");
+  });
+
+  it("不允许 . / .. / 带斜杠的名字（那是路径，不是名字）", () => {
+    expect(validateRename(".", entry, siblings)).toBe("这个名称不能用");
+    expect(validateRename("..", entry, siblings)).toBe("这个名称不能用");
+    expect(validateRename("../etc/passwd", entry, siblings)).toBe("名称里不能包含 /");
+  });
+
+  it("撞名时给一句能看懂的话，而不是让服务器回笼统的失败", () => {
+    expect(validateRename("b.log", entry, siblings)).toBe("当前目录已有「b.log」");
+  });
+
+  it("名字没改算通过（调用方会跳过请求）", () => {
+    expect(validateRename("a.log", entry, siblings)).toBeNull();
+  });
+
+  it("正常改名通过，前后的空格会被去掉", () => {
+    expect(validateRename("  c.log  ", entry, siblings)).toBeNull();
   });
 });

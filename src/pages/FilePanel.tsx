@@ -4,7 +4,14 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
-import { crumbsOf, formatMode, formatSize, formatSpeed, formatTime } from "../lib/files";
+import {
+  crumbsOf,
+  formatMode,
+  formatSize,
+  formatSpeed,
+  formatTime,
+  validateRename,
+} from "../lib/files";
 import { call } from "../lib/ipc";
 import { resolveCdPath } from "../lib/shell";
 import type { RemoteEntry, SftpOpened, TransferProgress } from "../lib/types";
@@ -15,6 +22,42 @@ type RowAction =
   | { kind: "rename"; entry: RemoteEntry }
   | { kind: "delete"; entry: RemoteEntry }
   | null;
+
+/**
+ * 面板顶部的提示。
+ *
+ * 分成 info / error 两类不是为了好看：**info 必须会自己消失**。
+ * 早先只有一根 string，下载开始时写了「已开始下载 x」，传完了它还在那儿，
+ * 用户会以为还在传 —— 提示不消失比没有提示更糟。
+ */
+interface Notice {
+  kind: "info" | "error";
+  text: string;
+  /** 服务器/后端给的具体原因，只有 error 才可能有 */
+  detail?: string | null;
+}
+
+/** 远端文件系统错误：`detail` 是服务器自己说的原因（Failure / Permission denied），值得给用户看。 */
+function remoteErrorNotice(err: unknown): Notice {
+  const error = fromUnknown(err);
+  const showDetail = error.detail && error.code.startsWith("SFTP_");
+  return {
+    kind: "error",
+    text: error.message,
+    detail: showDetail ? error.detail : null,
+  };
+}
+
+/** 提示行。info 用中性色，error 用警示色，服务器给的具体原因缩在后面。 */
+function NoticeLine({ notice }: { notice: Notice | null }) {
+  if (!notice) return null;
+  return (
+    <p className={`files-error${notice.kind === "info" ? " files-error--info" : ""}`}>
+      {notice.text}
+      {notice.detail ? <span className="files-error__detail">（{notice.detail}）</span> : null}
+    </p>
+  );
+}
 
 /**
  * 面板打开时先落在这里。
@@ -49,10 +92,17 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
   const [path, setPath] = useState("/");
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [draft, setDraft] = useState("");
   const [action, setAction] = useState<RowAction>(null);
   const [transfers, setTransfers] = useState<TransferProgress[]>([]);
+
+  // info 提示自己收掉（"已开始下载 x" 这类）；错误一直留着，直到下一次操作覆盖它。
+  useEffect(() => {
+    if (notice?.kind !== "info") return;
+    const timer = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   /** 拖拽本地文件悬停在面板上时的高亮 */
   const [dragOver, setDragOver] = useState(false);
   /** 右键菜单。`entry` 为 null 表示点在空白处（只给目录级操作）。 */
@@ -126,6 +176,12 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         uploadDirs.current.delete(payload.transferId);
         if (payload.state === "done" && dir === pathRef.current) scheduleRefresh();
       }
+
+      // 传完（成功、失败、取消都算）就把「已开始下载 x」收掉 ——
+      // 留着它会让人以为还在传，比没有提示更糟
+      if (payload.state !== "running") {
+        setNotice((current) => (current?.kind === "info" ? null : current));
+      }
     });
     return () => {
       void unlisten.then((fn) => fn());
@@ -166,7 +222,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         error.code === "SSH_HOST_KEY_UNKNOWN"
           ? "这台服务器还没确认过主机指纹。请先去「连接」页点「测试连接」，确认指纹后再回来。"
           : error.message;
-      setNotice(hint);
+      setNotice({ kind: "error", text: hint });
     } finally {
       setBusy(false);
     }
@@ -180,7 +236,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     shellCwd.current = null;
     prevShellCwd.current = null;
     // 留一句提示：不然面板变成一个没有出口的空屏，用户不知道还能重连
-    setNotice("已断开 SFTP 连接。");
+    setNotice({ kind: "info", text: "已断开 SFTP 连接。" });
     if (sid) {
       await call<void>("sftp_close", { sessionId: sid }).catch(() => undefined);
     }
@@ -247,7 +303,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       await load(sessionId, path);
       setNotice(null);
     } catch (err) {
-      setNotice(fromUnknown(err).message);
+      setNotice(remoteErrorNotice(err));
     }
   };
 
@@ -257,7 +313,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       const parent = await call<string | null>("sftp_parent_of", { path });
       if (parent) await load(sessionId, parent);
     } catch (err) {
-      setNotice(fromUnknown(err).message);
+      setNotice(remoteErrorNotice(err));
     }
   };
 
@@ -270,7 +326,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       setDraft("");
       if (sessionId) await load(sessionId, path);
     } catch (err) {
-      setNotice(fromUnknown(err).message);
+      setNotice(remoteErrorNotice(err));
     } finally {
       setBusy(false);
     }
@@ -287,7 +343,10 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
   const renameEntry = (entry: RemoteEntry) =>
     run(async () => {
       const name = draft.trim();
-      if (!name) throw new Error("请输入新名称");
+      const problem = validateRename(name, entry, entries);
+      if (problem) throw new Error(problem);
+      if (name === entry.name) return; // 没改，什么都不做
+
       const parent = entry.path.slice(0, entry.path.length - entry.name.length);
       const target = parent.endsWith("/") ? `${parent}${name}` : `${parent}/${name}`;
       await call<void>("sftp_rename", { sessionId, from: entry.path, to: target });
@@ -343,10 +402,10 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         }
       }
 
-      if (failed.length > 0) setNotice(failed.join("；"));
-      else setNotice(`已加入 ${queued} 个上传任务`);
+      if (failed.length > 0) setNotice({ kind: "error", text: failed.join("；") });
+      else setNotice({ kind: "info", text: `已加入 ${queued} 个上传任务` });
     } catch (err) {
-      setNotice(fromUnknown(err).message);
+      setNotice(remoteErrorNotice(err));
     }
   };
 
@@ -360,9 +419,9 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         remotePath: entry.path,
         localPath: target,
       });
-      setNotice(`已开始下载 ${entry.name}`);
+      setNotice({ kind: "info", text: `已开始下载 ${entry.name}` });
     } catch (err) {
-      setNotice(fromUnknown(err).message);
+      setNotice(remoteErrorNotice(err));
     }
   };
 
@@ -456,7 +515,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     return (
       <div className="file-panel__status">
         {busy ? <p className="files-hint">正在连接…</p> : null}
-        {notice ? <p className="files-error">{notice}</p> : null}
+        <NoticeLine notice={notice} />
         {!busy ? (
           <button
             type="button"
@@ -530,7 +589,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         ))}
       </nav>
 
-      {notice ? <p className="files-error">{notice}</p> : null}
+      <NoticeLine notice={notice} />
 
       {action?.kind === "mkdir" ? (
         <div className="files-inline">

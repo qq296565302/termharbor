@@ -1397,6 +1397,19 @@ button {
   font-size: 12.5px;
 }
 
+/* 进度类提示（"已开始下载 x"）：中性色，且会自动消失 */
+.files-error--info {
+  background: var(--bg-muted);
+  color: var(--text-muted);
+}
+
+/* 服务器给的具体原因，缩在后面，不抢主文案的位置 */
+.files-error__detail {
+  margin-left: 4px;
+  opacity: 0.75;
+  font-size: 11.5px;
+}
+
 .files-bar {
   display: flex;
   align-items: center;

@@ -62,3 +62,26 @@ export function formatMode(mode: number | null): string {
   if (mode === null || !Number.isFinite(mode)) return "—";
   return (mode & 0o777).toString(8).padStart(3, "0");
 }
+
+/**
+ * 重命名前的本地校验。返回错误文案；`null` 表示可以提交。
+ *
+ * 这几条都是"提交上去必然失败、但服务器只会回一个笼统的 Failure"的情况，
+ * 让用户看到「文件传输失败」等于什么都没说 —— 所以挡在本地，把原因说清楚。
+ */
+export function validateRename(
+  draft: string,
+  entry: { name: string; path: string },
+  siblings: { name: string; path: string }[],
+): string | null {
+  const name = draft.trim();
+  if (!name) return "请输入新名称";
+  if (name === "." || name === "..") return "这个名称不能用";
+  if (name.includes("/")) return "名称里不能包含 /";
+  if (name === entry.name) return null; // 没改，等同"可以提交"，调用方据此跳过请求
+
+  const clash = siblings.some((item) => item.name === name && item.path !== entry.path);
+  if (clash) return `当前目录已有「${name}」`;
+
+  return null;
+}
