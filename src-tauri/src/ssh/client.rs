@@ -203,15 +203,35 @@ pub(crate) async fn establish(
     .await;
 
     let mut handle = match outcome {
-        Err(_) => return Err(ProbeResult::Failed(AppError::new(ErrCode::SshTcpTimeout))),
+        Err(_) => {
+            tracing::warn!(
+                host = %req.host,
+                port = req.port,
+                stage = "tcp+kex",
+                secs = CONNECT_TIMEOUT.as_secs(),
+                "握手超时：TCP 连不上，或连上了但密钥交换没有回应"
+            );
+            return Err(ProbeResult::Failed(AppError::new(ErrCode::SshTcpTimeout)));
+        }
         Ok(Err(err)) => {
             if let Some(result) = classify_handshake_failure(&captured) {
                 return Err(result);
             }
-            return Err(ProbeResult::Failed(map_connect_error(&err)));
+            let mapped = map_connect_error(&err);
+            tracing::warn!(
+                host = %req.host,
+                port = req.port,
+                stage = "tcp+kex",
+                code = mapped.code.as_str(),
+                error = %err,
+                "握手失败"
+            );
+            return Err(ProbeResult::Failed(mapped));
         }
         Ok(Ok(handle)) => handle,
     };
+
+    let handshake_ms = started.elapsed().as_millis() as u64;
 
     // 会话不靠 inactivity_timeout 兜底了，认证阶段必须自带超时，
     // 否则服务器接受了 TCP 却一直不回认证结果时，这一步会永久挂起。
@@ -221,11 +241,27 @@ pub(crate) async fn establish(
     };
 
     if let Err(err) = authed {
+        tracing::warn!(
+            host = %req.host,
+            port = req.port,
+            stage = "auth",
+            handshake_ms,
+            code = err.code.as_str(),
+            "认证阶段失败或超时"
+        );
         let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
         return Err(ProbeResult::Failed(err));
     }
 
     let elapsed_ms = started.elapsed().as_millis() as u64;
+    tracing::info!(
+        host = %req.host,
+        port = req.port,
+        handshake_ms,
+        total_ms = elapsed_ms,
+        legacy = req.legacy_algorithms,
+        "SSH 建连完成"
+    );
     let host_key = captured
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

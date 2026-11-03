@@ -603,6 +603,17 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 调试提醒：**stdout 只走协议帧**，日志一律 stderr。混进去一行，宿主那边就是
 "连接成功但一个工具都看不到"。
 
+MCP 模式的日志只打 stderr（不落盘、绝不碰 stdout），宿主一般会把它收进自己的日志。
+连服务器慢的时候看这几行就能定位阶段：
+
+```
+INFO  SSH 建连完成 host=… port=22 handshake_ms=133 total_ms=220 legacy=false
+WARN  握手超时：TCP 连不上，或连上了但密钥交换没有回应  stage=tcp+kex secs=15
+WARN  认证阶段失败或超时  stage=auth handshake_ms=… code=…
+```
+
+要更细的日志，在宿主配置里加 `"env": { "TERMHARBOR_LOG": "termharbor_lib=debug,info" }`。
+
 ## 下一步
 
 M3、M6、诊断面板、设置页、关于页已完成，Windows 安装包能出。剩下：

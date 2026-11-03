@@ -30,6 +30,33 @@ impl LoggingGuard {
     }
 }
 
+/// 只打 stderr 的日志层，给无头模式（`termharbor.exe --mcp`）用。
+///
+/// 两条硬约束：
+/// 1. **绝不能碰 stdout** —— 那是 MCP 的协议通道，混进一行日志宿主就解析失败；
+/// 2. 不落盘 —— MCP 进程可能被宿主反复拉起，往数据目录写日志会互相踩。
+///
+/// 宿主通常会把子进程的 stderr 收进自己的日志，所以"连服务器很慢"这类问题
+/// 能在这里看到各阶段耗时。
+pub fn init_stderr(default_level: &str) -> AppResult<()> {
+    let filter = EnvFilter::try_from_env(ENV_FILTER)
+        .or_else(|_| EnvFilter::try_new(default_level))
+        .map_err(|e| AppError::internal(format!("日志过滤规则非法: {e}")))?;
+
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_target(false);
+
+    // 重复初始化（宿主重连、测试）直接忽略
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(layer)
+        .try_init();
+
+    Ok(())
+}
+
 pub fn init(log_dir: &Path, default_level: &str) -> AppResult<LoggingGuard> {
     std::fs::create_dir_all(log_dir)?;
 

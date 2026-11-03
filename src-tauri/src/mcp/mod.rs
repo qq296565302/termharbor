@@ -25,6 +25,10 @@ use std::io::{self, BufRead, Write};
 /// **stdout 只写协议帧**：日志一律 `eprintln!`。混进去一行，宿主那边就是
 /// "连接上了但工具全都不见了"，而且很难排查。
 pub async fn serve_stdio() {
+    // 日志只走 stderr。宿主会把它收进自己的日志里 —— "连服务器很慢"这种问题，
+    // 各个阶段的耗时就靠这里看。
+    let _ = crate::logging::init_stderr("info");
+
     // 路径算不出来（APPDATA 缺失之类）就直说，别让宿主看到"进程退出了但没原因"
     let ctx = match Context::new() {
         Ok(ctx) => ctx,
@@ -34,9 +38,9 @@ pub async fn serve_stdio() {
         }
     };
 
-    eprintln!(
-        "[termharbor-mcp] 启动，数据目录 {}",
-        ctx.paths().data_dir.display()
+    tracing::info!(
+        data_dir = %ctx.paths().data_dir.display(),
+        "MCP 服务启动"
     );
 
     let server = Server::new(ctx);
