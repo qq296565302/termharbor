@@ -9,14 +9,28 @@ use std::time::{Duration, Instant};
 
 use russh::client;
 use russh::keys::{PrivateKeyWithHashAlg, PublicKeyOrCertificate};
-use russh::Disconnect;
+use russh::{Disconnect, MethodKind, MethodSet};
 
 use super::hostkey::{decide, describe, HostKeyDecision, HostKeyInfo};
 use super::profile;
 use crate::error::{AppError, ErrCode};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const AUTH_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// 认证阶段超时。分两种用途，因为"该等多久"是两件事：
+///
+/// - 探活（测试连接）：失败要快，但**不能快到误报**。内网接了 AD/LDAP 的服务器，
+///   PAM 走一趟域控十几二十秒很常见 —— 原来卡在 20 秒，正好把它判死。
+/// - 会话（终端 / MCP 工具）：进一步放宽，宁可让用户看一分钟的"连接中"，
+///   也不要连得上却说连不上（0.1.19 之前就是这么误报的）。
+const AUTH_TIMEOUT_PROBE: Duration = Duration::from_secs(30);
+const AUTH_TIMEOUT_SESSION: Duration = Duration::from_secs(60);
+
+/// keyboard-interactive 的最多往返轮次。
+///
+/// PAM 正常只问一两轮（「Password:」），但服务器实现有 bug 时可能一直问下去。
+/// 给个上限，避免在这里死循环。
+const MAX_KBD_ROUNDS: usize = 5;
 
 /// 交互式会话的 keepalive 间隔。
 ///
@@ -235,8 +249,16 @@ pub(crate) async fn establish(
 
     // 会话不靠 inactivity_timeout 兜底了，认证阶段必须自带超时，
     // 否则服务器接受了 TCP 却一直不回认证结果时，这一步会永久挂起。
-    let authed = match tokio::time::timeout(AUTH_TIMEOUT, authenticate(&mut handle, req)).await {
-        Err(_) => Err(AppError::new(ErrCode::SshTcpTimeout)),
+    let auth_timeout = match purpose {
+        Purpose::Probe => AUTH_TIMEOUT_PROBE,
+        Purpose::Session => AUTH_TIMEOUT_SESSION,
+    };
+
+    let authed = match tokio::time::timeout(auth_timeout, authenticate(&mut handle, req)).await {
+        Err(_) => Err(AppError::with_detail(
+            ErrCode::SshTcpTimeout,
+            format!("认证阶段 {} 秒没有结果", auth_timeout.as_secs()),
+        )),
         Ok(result) => result,
     };
 
@@ -246,7 +268,9 @@ pub(crate) async fn establish(
             port = req.port,
             stage = "auth",
             handshake_ms,
+            timeout_s = auth_timeout.as_secs(),
             code = err.code.as_str(),
+            detail = err.detail.as_deref().unwrap_or("-"),
             "认证阶段失败或超时"
         );
         let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
@@ -321,11 +345,9 @@ async fn authenticate(
     session: &mut client::Handle<ProbeHandler>,
     req: &ProbeRequest,
 ) -> Result<(), AppError> {
-    let result = match &req.auth {
+    match &req.auth {
         ProbeAuth::Password(password) => {
-            session
-                .authenticate_password(req.username.clone(), password.clone())
-                .await
+            authenticate_password(session, &req.username, password, &req.host).await
         }
         ProbeAuth::PrivateKey { path, passphrase } => {
             let key = russh::keys::load_secret_key(path, passphrase.as_deref()).map_err(|err| {
@@ -342,22 +364,129 @@ async fn authenticate(
                 .map_err(|err| AppError::with_detail(ErrCode::SshAuthFailed, err.to_string()))?
                 .flatten();
 
-            session
+            let result = session
                 .authenticate_publickey(
                     req.username.clone(),
                     PrivateKeyWithHashAlg::new(Arc::new(key), hash),
                 )
                 .await
+                .map_err(|err| AppError::with_detail(ErrCode::SshAuthFailed, err.to_string()))?;
+
+            finish(result)
         }
-    };
+    }
+}
+
+/// 密码认证：先走 `password`，被拒且服务器提供 `keyboard-interactive` 时再走一遍。
+///
+/// 为什么必须退化：接了 PAM/AD 的服务器经常把 `password` 关掉、只留
+/// `keyboard-interactive`。此时 `password` 会被明确拒绝（很快，不是超时），
+/// 而其它客户端（FinalShell、OpenSSH）都会自动降级 —— 我们不降级的话，
+/// 用户看到的就是"这台机器连不上，换个工具又能连"。
+async fn authenticate_password(
+    session: &mut client::Handle<ProbeHandler>,
+    username: &str,
+    password: &str,
+    host: &str,
+) -> Result<(), AppError> {
+    let result = session
+        .authenticate_password(username.to_string(), password.to_string())
+        .await
+        .map_err(|err| AppError::with_detail(ErrCode::SshAuthFailed, err.to_string()))?;
+
+    match &result {
+        client::AuthResult::Success => Ok(()),
+        client::AuthResult::Failure {
+            remaining_methods, ..
+        } if remaining_methods.contains(&MethodKind::KeyboardInteractive) => {
+            tracing::info!(
+                host,
+                "password 被拒，但服务器提供 keyboard-interactive，用同一密码再试一次"
+            );
+            keyboard_interactive(session, username, password).await
+        }
+        client::AuthResult::Failure { .. } => finish(result),
+    }
+}
+
+/// keyboard-interactive：把服务器的每个提示都用同一个密码回答。
+///
+/// PAM 的典型问法是「Password: 」，答案就是密码；不问别的。所以这里不做
+/// "按提示内容猜"的聪明事 —— 猜错了反而会把密码发到不该发的地方。
+async fn keyboard_interactive(
+    session: &mut client::Handle<ProbeHandler>,
+    username: &str,
+    password: &str,
+) -> Result<(), AppError> {
+    let mut response = session
+        .authenticate_keyboard_interactive_start(username.to_string(), None::<String>)
+        .await
+        .map_err(|err| AppError::with_detail(ErrCode::SshAuthFailed, err.to_string()))?;
+
+    for _ in 0..MAX_KBD_ROUNDS {
+        match response {
+            client::KeyboardInteractiveAuthResponse::Success => return Ok(()),
+            client::KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods, ..
+            } => {
+                return Err(methods_error(&remaining_methods));
+            }
+            client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                // 提示数量可能为 0（服务器只想确认一下），那就回空数组
+                let answers = vec![password.to_string(); prompts.len()];
+                response = session
+                    .authenticate_keyboard_interactive_respond(answers)
+                    .await
+                    .map_err(|err| {
+                        AppError::with_detail(ErrCode::SshAuthFailed, err.to_string())
+                    })?;
+            }
+        }
+    }
+
+    Err(AppError::with_detail(
+        ErrCode::SshAuthFailed,
+        format!("keyboard-interactive 往返超过 {MAX_KBD_ROUNDS} 轮"),
+    ))
+}
+
+fn finish(result: client::AuthResult) -> Result<(), AppError> {
+    if result.success() {
+        return Ok(());
+    }
 
     match result {
-        Ok(auth) if auth.success() => Ok(()),
-        Ok(_) => Err(AppError::new(ErrCode::SshAuthFailed)),
-        Err(err) => Err(AppError::with_detail(
+        client::AuthResult::Failure {
+            remaining_methods, ..
+        } => Err(methods_error(&remaining_methods)),
+        client::AuthResult::Success => Ok(()),
+    }
+}
+
+/// 认证失败时把"服务器还接受什么"写进 detail。
+///
+/// 不带这句的话，用户只能看到"认证失败，请检查用户名和凭据"，
+/// 而真实原因可能是"这台机器根本不接受密码，只接受公钥"——完全不同的处理方式。
+fn methods_error(remaining: &MethodSet) -> AppError {
+    let names: Vec<&str> = remaining
+        .iter()
+        .filter_map(|kind| match kind {
+            MethodKind::Password => Some("password"),
+            MethodKind::PublicKey => Some("publickey"),
+            MethodKind::KeyboardInteractive => Some("keyboard-interactive"),
+            MethodKind::HostBased => Some("hostbased"),
+            MethodKind::GssapiWithMic => Some("gssapi-with-mic"),
+            MethodKind::None => None,
+        })
+        .collect();
+
+    if names.is_empty() {
+        AppError::new(ErrCode::SshAuthFailed)
+    } else {
+        AppError::with_detail(
             ErrCode::SshAuthFailed,
-            err.to_string(),
-        )),
+            format!("认证失败；服务器仍接受的方式：{}", names.join(", ")),
+        )
     }
 }
 
@@ -633,5 +762,33 @@ mod tests {
             }
             other => panic!("开启兼容开关后应当能连上，实际 {other:?}"),
         }
+    }
+
+    /// 认证失败时要把"服务器还接受什么"说清楚。
+    ///
+    /// 真实场景：服务器只允许 publickey，用户却在用密码连。原来只报"认证失败，
+    /// 请检查用户名和凭据"，等于让人去查一个根本没问题的东西。
+    #[test]
+    fn methods_error_lists_what_the_server_still_accepts() {
+        let kinds: &[MethodKind] = &[MethodKind::PublicKey, MethodKind::KeyboardInteractive];
+        let remaining = MethodSet::from(kinds);
+        let err = methods_error(&remaining);
+
+        assert_eq!(err.code, ErrCode::SshAuthFailed);
+        let detail = err.detail.expect("要带上剩余方式");
+        assert!(detail.contains("publickey"), "实际: {detail}");
+        assert!(detail.contains("keyboard-interactive"), "实际: {detail}");
+        assert!(
+            !detail.contains("password"),
+            "password 已经被拒了，不该再列：{detail}"
+        );
+    }
+
+    /// 服务器什么都没说（`none`）时不要拼出「服务器仍接受的方式：」这种空话。
+    #[test]
+    fn methods_error_stays_quiet_when_nothing_is_left() {
+        let err = methods_error(&MethodSet::empty());
+        assert_eq!(err.code, ErrCode::SshAuthFailed);
+        assert!(err.detail.is_none());
     }
 }
