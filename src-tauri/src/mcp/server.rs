@@ -106,9 +106,17 @@ impl Server {
 mod tests {
     use super::*;
 
+    /// 每次调用都要一个**独立的临时目录**。
+    ///
+    /// 早先按 pid 拼名字，同一进程里的测试并行跑时会互相删目录（`remove_dir_all`），
+    /// 症状是"单跑过、一起跑挂"—— 和 ssh 测试那边踩过的是同一类坑。
     fn server() -> Server {
-        let dir =
-            std::env::temp_dir().join(format!("termharbor-mcp-server-{}", std::process::id()));
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "termharbor-mcp-server-{}-{unique}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::create_dir_all(&dir);
         Server::new(Context::for_tests(dir))
@@ -215,6 +223,34 @@ mod tests {
         )
         .await;
         assert_eq!(value["error"]["code"], INVALID_PARAMS);
+    }
+
+    /// load_snapshot 要连服务器，没法在单测里跑通；但参数校验和"连接不存在"这两步
+    /// 在本地就能覆盖 —— 它们是最容易被改坏的入口。
+    #[tokio::test]
+    async fn load_snapshot_rejects_missing_and_unknown_connection() {
+        let server = server();
+
+        let missing = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"load_snapshot","arguments":{}}}"#,
+        )
+        .await;
+        assert_eq!(missing["error"]["code"], INVALID_PARAMS);
+
+        let unknown = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"load_snapshot","arguments":{"connection":"没有这台"}}}"#,
+        )
+        .await;
+        assert_eq!(unknown["error"]["code"], INVALID_PARAMS);
+        assert!(
+            unknown["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("list_connections"),
+            "错误信息要指路：{unknown}"
+        );
     }
 
     #[tokio::test]

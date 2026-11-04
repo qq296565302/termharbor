@@ -9,9 +9,9 @@
 use std::time::Duration;
 
 use russh::client::Handle;
-use russh::ChannelMsg;
+use russh::{ChannelMsg, Disconnect};
 
-use super::client::ProbeHandler;
+use super::client::{establish, ProbeHandler, ProbeRequest, ProbeResult, Purpose};
 use crate::error::{AppError, AppResult, ErrCode};
 
 /// 诊断命令都是秒级的；超过这个时间说明服务器卡了，直接放弃。
@@ -77,4 +77,45 @@ pub(crate) async fn exec_once(conn: &Handle<ProbeHandler>, command: &str) -> App
     }
 
     Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
+/// 建一条临时连接、跑一条命令、断开。
+///
+/// GUI 的诊断复用终端会话的连接，MCP 没有长期会话，所以每次新开一条、用完即关。
+/// 代价是多一次握手（内网十几毫秒），换来的是不必为 MCP 维护会话池和超时回收。
+pub(crate) async fn exec_on_fresh_connection(
+    request: ProbeRequest,
+    command: &str,
+) -> AppResult<String> {
+    let established = establish(&request, Purpose::Session)
+        .await
+        .map_err(probe_failure_to_error)?;
+
+    let result = exec_once(&established.handle, command).await;
+    let _ = established
+        .handle
+        .disconnect(Disconnect::ByApplication, "", "en")
+        .await;
+    result
+}
+
+/// 把探活的各种失败分支折成一句能给人看的错误。
+fn probe_failure_to_error(result: ProbeResult) -> AppError {
+    match result {
+        ProbeResult::Failed(err) => err,
+        // 走到这里说明 known_hosts 策略拦下了这条连接（指纹未确认 / 已变更）。
+        // MCP 没有弹窗渠道，只能要求用户先去 GUI 里确认一次 —— 这比悄悄放行安全。
+        ProbeResult::NeedsConfirmation { fingerprint, .. } => AppError::with_detail(
+            ErrCode::SshHostKeyUnknown,
+            format!("这台服务器还没确认过主机指纹（{fingerprint}），请先在图形界面里连接一次"),
+        ),
+        ProbeResult::HostKeyChanged { stored, .. } => AppError::with_detail(
+            ErrCode::SshHostKeyMismatch,
+            format!("主机密钥已变更，记录的是 {stored}，已阻断"),
+        ),
+        ProbeResult::CertificateUnsupported => {
+            AppError::with_detail(ErrCode::SshAuthFailed, "服务器只提供证书认证，暂不支持")
+        }
+        ProbeResult::Connected(_) => AppError::internal("establish 返回了 Connected，不符合预期"),
+    }
 }

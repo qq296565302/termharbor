@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use super::context::Context;
 use super::jsonrpc::{RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::error::AppError;
+use crate::monitor::load::LoadSnapshot;
 
 /// 一次最多返回多少条目录项。
 ///
@@ -85,7 +86,7 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
     match name {
         "list_connections" => list_connections(ctx).await,
         "sftp_list" => sftp_list(ctx, arguments).await,
-        "load_snapshot" => Ok(unimplemented("load_snapshot", "M8-1 第 3 步")),
+        "load_snapshot" => load_snapshot(ctx, arguments).await,
         other => {
             let available: Vec<&str> = list().iter().map(|tool| tool.name).collect();
             Err(RpcError::new(
@@ -204,6 +205,36 @@ async fn list_remote(
     rows
 }
 
+/// 采一次负载快照。走 `monitor` 里同一条采样命令，所以数字和界面上的看板一致。
+async fn load_snapshot(ctx: &Context, arguments: Option<&Value>) -> Result<Value, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let id = resolve_connection_id(ctx, &spec).await?;
+
+    match sample_load(ctx, &id).await {
+        Ok(snapshot) => Ok(text(
+            serde_json::to_string_pretty(&snapshot).unwrap_or_default(),
+        )),
+        Err(err) => Ok(failed(describe(&err))),
+    }
+}
+
+async fn sample_load(ctx: &Context, id: &str) -> crate::error::AppResult<LoadSnapshot> {
+    let state = ctx.app_state()?;
+    let prepared =
+        crate::commands::connections::prepare_probe(&state, Some(id.to_string()), None, None)
+            .await?;
+
+    // 一条 exec 通道跑完整条采样命令；内部自己 sleep 采两帧算速率
+    let raw = crate::ssh::exec::exec_on_fresh_connection(
+        prepared.request,
+        crate::monitor::load::SAMPLE_COMMAND,
+    )
+    .await?;
+
+    Ok(crate::monitor::load::parse(&raw))
+}
+
 /// 按 id 或名称找一个连接。
 ///
 /// 名称不是唯一键（数据库没做唯一约束），重名时**不猜**，把候选列出来让调用方换用 id。
@@ -260,12 +291,6 @@ fn failed(message: impl Into<String>) -> Value {
         "content": [{ "type": "text", "text": message.into() }],
         "isError": true
     })
-}
-
-fn unimplemented(tool: &str, when: &str) -> Value {
-    failed(format!(
-        "{tool} 尚未实现（{when}）。当前版本只验证 MCP 协议链路。"
-    ))
 }
 
 /// 把 `AppError` 变成模型能读的一句话。

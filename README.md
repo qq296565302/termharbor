@@ -588,9 +588,9 @@ python scripts/make-ico.py --check   # 打印每个条目是 PNG 还是 DIB
 > 有些宿主不展开 `%LOCALAPPDATA%`，写全路径即可。排障时也可以用独立的
 > `termharbor-mcp.exe`（`cargo build --bin termharbor-mcp`），它和 `--mcp` 跑的是同一份循环。
 
-**当前进度**：协议链路 + 两个工具的实现已通。`list_connections` 读本地配置库
-（不解密任何凭据），`sftp_list` 真连一次服务器列目录后立刻断开（复用 GUI 的
-`prepare_probe`，所以凭据解密、known_hosts 校验是同一套策略）。`load_snapshot` 还没接。
+**当前进度**：三个只读工具都通了。`list_connections` 读本地配置库（不解密任何凭据）；
+`sftp_list` 与 `load_snapshot` 各开一条临时连接、做完即断，复用 GUI 的 `prepare_probe`
+与 `monitor::load`，所以凭据解密、主机指纹校验、负载算法都是同一套。
 密钥**用到才取**：只列连接不会去碰系统凭据管理器。可以这样自测：
 
 ```bash
