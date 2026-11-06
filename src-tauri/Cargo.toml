@@ -1,6 +1,6 @@
 [package]
 name = "termharbor"
-version = "0.1.25"
+version = "0.1.26"
 description = "TermHarbor / 终端港 — 跨平台 SSH 终端与文件管理客户端"
 authors = ["TermHarbor"]
 edition = "2021"
@@ -51,6 +51,14 @@ reqwest = { version = "0.12", default-features = false, features = [
 [features]
 default = ["keychain"]
 keychain = ["dep:keyring"]
+
+# 只给密钥镜像用：DPAPI 把密钥绑到当前 Windows 用户主密钥上，
+# 不需要交互登录会话，后台进程也能解。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+] }
 
 [profile.release]
 # 为「安装包 < 20MB」服务

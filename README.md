@@ -603,38 +603,24 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 调试提醒：**stdout 只走协议帧**，日志一律 stderr。混进去一行，宿主那边就是
 "连接成功但一个工具都看不到"。
 
-### 后台会话里的密钥问题
+### 后台会话里的密钥：不需要额外操作
 
-MCP 宿主有时把子进程起在**非交互登录会话**（Windows 服务、计划任务）里，此时系统凭据管理器
-会报 `ERROR_NO_SUCH_LOGON_SESSION`，工具返回 `CRYPTO_KEY_UNAVAILABLE` ——
-列表能读（不解密），但凡是真要连服务器的工具都会失败。
+MCP 宿主常把子进程起在**非交互登录会话**（Windows 服务、计划任务）里，那种会话打不开
+系统凭据管理器。为了不让用户为此做任何配置，应用在**每次正常启动时会写一份密钥镜像**：
 
-最干净的解法是**让宿主运行在正常用户会话里**（从桌面启动，而不是注册成服务）。
+- Windows 上用 DPAPI（`CryptProtectData`）把同一把数据密钥加密到
+  `%APPDATA%\com.termharbor.app\key.bin`，绑到当前 Windows 用户主密钥，
+  不依赖交互登录，别人拿到文件也解不开
+- MCP 启动时优先读这份镜像，读不到才回退系统凭据管理器
+- 镜像写在应用数据目录里，卸载时随目录一起删掉
 
-如果做不到，可以显式开一个逃生口（**仅建议受控内网**）。先在你自己的正常会话里执行一次，
-把现有密钥导出：
+所以用户的操作只有一步：**装完后正常打开一次 TermHarbor**（本来就要配连接）。
+之后 MCP 宿主在桌面、后台、开机自启都能用，不需要环境变量、不需要导出密钥、
+也不需要手动确认指纹以外的任何东西。
 
-```
-%LOCALAPPDATA%\TermHarbor\termharbor.exe --export-key
-```
-
-然后在宿主配置里加环境变量并重启宿主：
-
-```json
-{
-  "mcpServers": {
-    "termharbor": {
-      "command": "C:\\Users\\你\\AppData\\Local\\TermHarbor\\termharbor.exe",
-      "args": ["--mcp"],
-      "env": { "TERMHARBOR_KEY_PROVIDER": "devfile" }
-    }
-  }
-}
-```
-
-> **代价**：`--export-key` 会把 32 字节数据密钥以明文写到
-> `%APPDATA%\com.termharbor.app\dev_key.hex`，只靠用户目录 ACL 保护。
-> 用完请删除该文件并去掉环境变量，恢复默认的凭据管理器；不要在有他人可登录的机器上这么做。
+> 边界：宿主必须**以同一个 Windows 账号**运行。如果它跑在另一个账号下（比如
+> `LOCAL SYSTEM` 服务），连用户目录都不是同一个，任何本地方案都无解 ——
+> 那种情况需要让宿主改用同一账号，或者走 HTTP/SSE 传输（尚未实现）。
 
 MCP 模式的日志只打 stderr（不落盘、绝不碰 stdout），宿主一般会把它收进自己的日志。
 连服务器慢的时候看这几行就能定位阶段：

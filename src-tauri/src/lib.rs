@@ -108,7 +108,23 @@ pub fn run() {
             let provider = default_provider(&paths.data_dir);
             let key_source = provider.source();
             let cipher = match provider.load_or_create() {
-                Ok(key) => Some(Arc::new(FieldCipher::new(&key))),
+                Ok(key) => {
+                    // 顺手写一份后台可读的密钥镜像。MCP 宿主常把子进程起在非交互
+                    // 会话里，那种会话打不开凭据管理器；镜像用 DPAPI 绑到用户主密钥，
+                    // 后台也能解。写失败只 warn —— 镜像是加速路径，主流程不受影响。
+                    let mirror_path = paths.data_dir.join(crypto::mirror::FILE_NAME);
+                    match crypto::mirror::store(&key, &mirror_path) {
+                        Ok(()) => tracing::info!(
+                            path = %mirror_path.display(),
+                            "已写好后台可读的密钥镜像"
+                        ),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            "密钥镜像写入失败，后台会话可能读不到密钥"
+                        ),
+                    }
+                    Some(Arc::new(FieldCipher::new(&key)))
+                }
                 Err(err) => {
                     // 拿不到密钥不该直接崩：应用仍可启动，只是处于未解锁状态，
                     // 需要加密的 command 会返回 CRYPTO_KEY_UNAVAILABLE。

@@ -302,9 +302,10 @@ fn backend_failure(err: &AppError) -> Value {
     let mut message = describe(err);
     if err.code == ErrCode::CryptoKeyUnavailable {
         message.push_str(
-            "\n处理方式：在正常的交互会话里运行一次 `termharbor.exe --export-key`，\
-             然后给 MCP 宿主设置环境变量 TERMHARBOR_KEY_PROVIDER=devfile 并重启宿主。\
-             不要启动图形界面，也不要让用户手动点按钮。",
+            "\n处理方式：让用户打开一次 TermHarbor 应用（正常启动即可，不用点任何东西），\
+             应用会自动准备后台可读的密钥；然后重启 MCP 宿主。\
+             如果宿主是以另一个 Windows 账号运行的，需要改成用同一账号运行。\
+             不要让用户手动导出密钥，也不要让用户去界面里点按钮。",
         );
     }
     failed(message)
@@ -400,13 +401,13 @@ mod tests {
 
         assert_eq!(value["isError"], true);
         assert!(text.contains("CRYPTO_KEY_UNAVAILABLE"));
-        assert!(text.contains("--export-key"), "要说清导出命令：{text}");
         assert!(
-            text.contains("TERMHARBOR_KEY_PROVIDER=devfile"),
-            "要说清环境变量：{text}"
+            text.contains("打开一次 TermHarbor"),
+            "要让用户打开一次应用：{text}"
         );
+        assert!(text.contains("重启 MCP 宿主"), "要说清重启宿主：{text}");
         assert!(
-            text.contains("不要启动图形界面"),
+            text.contains("不要让用户去界面里点按钮"),
             "要明确禁止它自作主张：{text}"
         );
     }

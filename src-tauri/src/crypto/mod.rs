@@ -7,13 +7,14 @@
 
 pub mod cipher;
 pub mod kdf;
+pub mod mirror;
 pub mod provider;
 
 use rand::RngCore;
 
 pub use cipher::FieldCipher;
 pub use kdf::{derive_key, random_salt, KdfParams};
-pub use provider::{default_provider, export_key_to_devfile, DevFileKeyProvider, KeyProvider};
+pub use provider::{default_provider, DevFileKeyProvider, KeyProvider};
 
 /// 数据密钥长度（AES-256）。
 pub const KEY_LEN: usize = 32;

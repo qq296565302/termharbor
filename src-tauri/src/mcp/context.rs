@@ -75,9 +75,28 @@ impl Context {
         let db = self.db()?.clone();
         let provider = default_provider(&self.paths.data_dir);
         let key_source = provider.source();
-        let key = provider
-            .load_or_create()
-            .map_err(crate::error::AppError::from)?;
+
+        // 优先读 GUI 写好的镜像：它用 DPAPI 绑到 Windows 用户主密钥，**不依赖交互登录会话**。
+        // 读不到再回退系统凭据管理器（桌面会话里可用），并留日志说明走了哪条路。
+        let mirror_path = self.paths.data_dir.join(crate::crypto::mirror::FILE_NAME);
+        let key = match crate::crypto::mirror::load(&mirror_path) {
+            Ok(key) => {
+                tracing::info!("使用后台可读的密钥镜像");
+                key
+            }
+            Err(reason) => {
+                tracing::warn!(error = %reason, "没有可用密钥镜像，回退系统凭据管理器");
+                let key = provider
+                    .load_or_create()
+                    .map_err(crate::error::AppError::from)?;
+                // 这次是在能读钥匙串的会话里跑通的，顺手把镜像补上，
+                // 下次即使宿主起在后台会话里也不用再回退。
+                if let Err(err) = crate::crypto::mirror::store(&key, &mirror_path) {
+                    tracing::warn!(error = %err, "补写密钥镜像失败，下次仍需回退");
+                }
+                key
+            }
+        };
 
         let state = Arc::new(AppState {
             db,
@@ -133,6 +152,20 @@ mod tests {
         let first = ctx.db().expect("第一次").clone();
         let second = ctx.db().expect("第二次").clone();
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    /// 这是"用户零操作"的核心路径：只要 data_dir 里有镜像，MCP 就能自己拿到密钥，
+    /// 不需要宿主处在交互会话里，也不需要任何环境变量。
+    #[test]
+    fn app_state_unlocks_from_mirror_alone() {
+        let dir = temp_dir("mirror");
+        let key = [0x7u8; 32];
+        let mirror_path = dir.join(crate::crypto::mirror::FILE_NAME);
+        crate::crypto::mirror::store(&key, &mirror_path).expect("写镜像");
+
+        let ctx = Context::for_tests(dir.clone());
+        let state = ctx.app_state().expect("有镜像就该能组装出解锁状态");
+        assert!(!state.is_locked(), "有镜像时不该停留在未解锁状态");
     }
 
     #[test]

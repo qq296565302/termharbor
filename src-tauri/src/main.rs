@@ -11,37 +11,7 @@ fn main() {
         std::process::exit(run_mcp());
     }
 
-    // `--export-key`：在正常交互会话里把数据密钥导出一次，供后台会话里的 MCP 用。
-    // 系统凭据管理器在非交互登录会话（服务/计划任务）里会报 ERROR_NO_SUCH_LOGON_SESSION。
-    if std::env::args().skip(1).any(|arg| arg == "--export-key") {
-        std::process::exit(export_key());
-    }
-
     termharbor_lib::run()
-}
-
-fn export_key() -> i32 {
-    let result = (|| -> termharbor_lib::error::AppResult<std::path::PathBuf> {
-        let paths = termharbor_lib::state::AppPaths::resolve_headless()?;
-        let file = termharbor_lib::crypto::export_key_to_devfile(&paths.data_dir)
-            .map_err(termharbor_lib::error::AppError::from)?;
-        Ok(file)
-    })();
-
-    match result {
-        Ok(file) => {
-            eprintln!("已导出数据密钥到：{}", file.display());
-            eprintln!(
-                "在 MCP 宿主里设置环境变量 TERMHARBOR_KEY_PROVIDER=devfile，后台会话就能读到同一把密钥。"
-            );
-            eprintln!("注意：这是明文文件，只靠用户目录 ACL 保护，用完请删除并恢复默认。");
-            0
-        }
-        Err(err) => {
-            eprintln!("导出失败：{err}");
-            1
-        }
-    }
 }
 
 fn run_mcp() -> i32 {
