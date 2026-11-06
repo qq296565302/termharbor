@@ -41,6 +41,30 @@ pub fn default_provider(data_dir: &Path) -> Box<dyn KeyProvider> {
     }
 }
 
+/// 把当前密钥导出成 `dev_key.hex`，返回写出的路径。
+///
+/// 存在的理由很具体：MCP 宿主有时把子进程起在**非交互登录会话**里（Windows 服务、
+/// 后台任务），此时系统凭据管理器会报 `ERROR_NO_SUCH_LOGON_SESSION`，读不到密钥。
+/// 让用户在他自己的正常会话里跑一次 `--export-key`，后台进程改用
+/// `TERMHARBOR_KEY_PROVIDER=devfile` 就能读同一把密钥。
+///
+/// **安全代价要说清楚**：导出的那一刻起，密钥以明文存在磁盘上，只靠用户目录 ACL 保护。
+/// 这是给受控内网环境用的显式逃生口，不是默认行为；用完应当删掉这个文件并恢复默认。
+pub fn export_key_to_devfile(data_dir: &Path) -> Result<PathBuf, CryptoError> {
+    let provider = default_provider(data_dir);
+    let key = provider.load_or_create()?;
+    let path = data_dir.join("dev_key.hex");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| CryptoError::KeyStore(e.to_string()))?;
+    }
+    write_key_file(&path, &hex_encode(&key)).map_err(|e| CryptoError::KeyStore(e.to_string()))?;
+    tracing::warn!(
+        path = %path.display(),
+        "已导出数据密钥到明文文件，仅用于非交互会话的 MCP；用完请删除"
+    );
+    Ok(path)
+}
+
 // ---------------------------------------------------------------- 系统钥匙串
 
 #[cfg(feature = "keychain")]

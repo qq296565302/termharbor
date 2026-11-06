@@ -18,7 +18,12 @@ pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-0
 /// 给模型看的开场白。写得越具体，模型越少乱调工具。
 const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接访问服务器，**只做只读操作**。\
 先调用 list_connections 拿到连接名，再用 sftp_list / load_snapshot 查询。\
-不会也不能返回密码、私钥或主机指纹。";
+不会也不能返回密码、私钥或主机指纹。\
+\
+纪律（很重要）：\
+1. 只用本服务的工具查询。不要启动图形界面、不要自己扫描端口、不要让用户去界面里手动点按钮。\
+2. list_connections 只是「已保存的连接」，不表示在线，也不表示能登录成功；不要据此断言在线状态。\
+3. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。";
 
 pub struct Server {
     ctx: Context,
@@ -146,6 +151,21 @@ mod tests {
                 .contains("只读"),
             "开场白里要明确只读，减少模型乱调"
         );
+    }
+
+    /// agent 曾经自己扫端口、启动 GUI 让用户点按钮。开场白里把这三条纪律钉死。
+    #[tokio::test]
+    async fn instructions_forbid_gui_and_port_scanning() {
+        let value = call(
+            &server(),
+            r#"{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#,
+        )
+        .await;
+        let text = value["result"]["instructions"].as_str().unwrap();
+
+        assert!(text.contains("不要启动图形界面"), "{text}");
+        assert!(text.contains("不要自己扫描端口"), "{text}");
+        assert!(text.contains("不表示在线"), "{text}");
     }
 
     #[tokio::test]

@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use super::context::Context;
 use super::jsonrpc::{RpcError, INTERNAL_ERROR, INVALID_PARAMS};
-use crate::error::AppError;
+use crate::error::{AppError, ErrCode};
 use crate::monitor::load::LoadSnapshot;
 
 /// 一次最多返回多少条目录项。
@@ -37,7 +37,8 @@ pub fn list() -> Vec<ToolInfo> {
         ToolInfo {
             name: "list_connections",
             description: "列出 TermHarbor 里保存的服务器连接。只返回名称、主机、端口、用户名、\
-                          认证方式，不含任何密码、私钥或主机指纹。",
+                          认证方式，不含任何密码、私钥或主机指纹。\
+                          这只是「已保存的连接」，不检测是否在线、也不代表能登录成功。",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -122,7 +123,7 @@ async fn list_connections(ctx: &Context) -> Result<Value, RpcError> {
                 serde_json::to_string_pretty(&items).unwrap_or_default(),
             ))
         }
-        Err(err) => Ok(failed(describe(&err))),
+        Err(err) => Ok(backend_failure(&err)),
     }
 }
 
@@ -178,7 +179,7 @@ async fn sftp_list(ctx: &Context, arguments: Option<&Value>) -> Result<Value, Rp
                 serde_json::to_string_pretty(&items).unwrap_or_default()
             )))
         }
-        Err(err) => Ok(failed(describe(&err))),
+        Err(err) => Ok(backend_failure(&err)),
     }
 }
 
@@ -215,7 +216,7 @@ async fn load_snapshot(ctx: &Context, arguments: Option<&Value>) -> Result<Value
         Ok(snapshot) => Ok(text(
             serde_json::to_string_pretty(&snapshot).unwrap_or_default(),
         )),
-        Err(err) => Ok(failed(describe(&err))),
+        Err(err) => Ok(backend_failure(&err)),
     }
 }
 
@@ -291,6 +292,22 @@ fn failed(message: impl Into<String>) -> Value {
         "content": [{ "type": "text", "text": message.into() }],
         "isError": true
     })
+}
+
+/// 后端失败时把"下一步该做什么"一起给出去。
+///
+/// 模型看到一句光秃秃的错误码会自己编解决办法（实测它会让用户"打开界面点一下"，
+/// 甚至自己扫端口声称服务器在线）。密钥不可用这种有确定解法的问题，就该把解法写死在结果里。
+fn backend_failure(err: &AppError) -> Value {
+    let mut message = describe(err);
+    if err.code == ErrCode::CryptoKeyUnavailable {
+        message.push_str(
+            "\n处理方式：在正常的交互会话里运行一次 `termharbor.exe --export-key`，\
+             然后给 MCP 宿主设置环境变量 TERMHARBOR_KEY_PROVIDER=devfile 并重启宿主。\
+             不要启动图形界面，也不要让用户手动点按钮。",
+        );
+    }
+    failed(message)
 }
 
 /// 把 `AppError` 变成模型能读的一句话。
@@ -372,6 +389,40 @@ mod tests {
         assert_eq!(value["isError"], false);
         assert_eq!(value["content"][0]["type"], "text");
         assert_eq!(value["content"][0]["text"], "ok");
+    }
+
+    /// 密钥不可用时必须给出确定的解法，别让模型自己编（实测它会让用户去点 GUI）。
+    #[test]
+    fn key_unavailable_error_tells_the_agent_exactly_what_to_do() {
+        let err = AppError::new(ErrCode::CryptoKeyUnavailable);
+        let value = backend_failure(&err);
+        let text = value["content"][0]["text"].as_str().unwrap();
+
+        assert_eq!(value["isError"], true);
+        assert!(text.contains("CRYPTO_KEY_UNAVAILABLE"));
+        assert!(text.contains("--export-key"), "要说清导出命令：{text}");
+        assert!(
+            text.contains("TERMHARBOR_KEY_PROVIDER=devfile"),
+            "要说清环境变量：{text}"
+        );
+        assert!(
+            text.contains("不要启动图形界面"),
+            "要明确禁止它自作主张：{text}"
+        );
+    }
+
+    /// 连接列表不是探活结果，说明里必须写死，否则模型会自己扫端口编一个"在线"出来。
+    #[test]
+    fn connection_list_description_rejects_online_assumptions() {
+        let tool = list()
+            .into_iter()
+            .find(|t| t.name == "list_connections")
+            .unwrap();
+        assert!(
+            tool.description.contains("不检测是否在线"),
+            "{}",
+            tool.description
+        );
     }
 
     #[test]
