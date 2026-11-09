@@ -18,12 +18,15 @@ use crate::mcp::exec::validate_command;
 use crate::state::AppState;
 
 /// 常用只读命令模板。给设置页做成可勾选的按钮，人不用手敲命令。
+/// 收窄命令时用得上的常见入口。默认档是「任意单条命令」，这些只在用户主动收窄时出现。
 pub const COMMAND_TEMPLATES: &[&str] = &[
     "df -h",
     "free -m",
     "uptime",
     "systemctl status",
     "journalctl -n 50",
+    "docker ps",
+    "apt-get install -y",
 ];
 
 #[derive(Debug, Serialize)]

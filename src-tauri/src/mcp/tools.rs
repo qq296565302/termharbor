@@ -1,19 +1,25 @@
 //! 工具清单与实现。
 //!
-//! 四道闸门全部在**服务端**：连接是否启用 → 工具是否允许 → 参数（路径/命令）→ 执行限额。
+//! 闸门全部在**服务端**：连接是否启用 → 工具是否允许 → 参数（路径/命令）→ 执行限额。
 //! agent 传什么参数都绕不过去，因为它不参与任何放行判断。
+//!
+//! 0.1.28 起「启用」就是这台机器的全部能力，三个列表留空表示不限；
+//! 唯一始终不让步的是**复合命令**（`;`、管道、重定向等），因为它破坏的是
+//! 「一次调用只做一件事」这个契约，而不是权限 —— agent 要多步就多调几次。
 //!
 //! 错误分三层，别混：
 //! - **协议错误**（`RpcError`）：参数不对、工具名不认识 —— 调用方写错了。
-//! - **白名单拒绝**（`Outcome::Denied`）：配置没开 —— 明确告诉模型"找管理员开"。
+//! - **拒绝**（`Outcome::Denied`）：配置把这条收窄掉了 —— 明确告诉模型"找用户开"。
 //! - **执行失败**（`isError` 的 content）：连不上、没权限、目录不存在 —— 让模型据此改口。
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::config::{
-    ConnectionPolicy, McpConfig, ALL_TOOLS, TOOL_EXEC, TOOL_LIST_CONNECTIONS, TOOL_LOAD_SNAPSHOT,
-    TOOL_SFTP_LIST,
+    ConnectionPolicy, ExecPolicy, McpConfig, ALL_TOOLS, TOOL_EXEC, TOOL_LIST_CONNECTIONS,
+    TOOL_LOAD_SNAPSHOT, TOOL_SFTP_DOWNLOAD, TOOL_SFTP_LIST, TOOL_SFTP_MKDIR, TOOL_SFTP_READ,
+    TOOL_SFTP_RENAME, TOOL_SFTP_UPLOAD, TOOL_SFTP_WRITE,
 };
 use super::context::Context;
 use super::exec::{validate_command, DenyReason};
@@ -29,6 +35,19 @@ use crate::storage::connections::ConnectionRecord;
 /// 远端有个 5 万文件的目录时，全塞给模型既没用又贵。超出部分明确告诉它"被截断了"，
 /// 比让它以为目录就这么点内容安全。
 const MAX_ENTRIES: usize = 200;
+
+/// 读文件的默认与硬顶字节数。
+///
+/// 这不是安全边界，是**上下文预算**：1MB 文本进模型要花掉几万 token，
+/// 还没开始干活就把窗口撑爆了。要整份文件就让 agent 走 `sftp_download`。
+const DEFAULT_READ_BYTES: u64 = 256 * 1024;
+const MAX_READ_BYTES: u64 = 1024 * 1024;
+
+/// 直接写入的正文上限（`sftp_write` 的 `content`）。
+const MAX_WRITE_BYTES: usize = 1024 * 1024;
+
+/// 审计里参数摘要的字符上限。够定位一次调用，又不至于把日志写垮。
+const AUDIT_ARG_CHARS: usize = 512;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,8 +73,7 @@ pub fn list() -> Vec<ToolInfo> {
         },
         ToolInfo {
             name: TOOL_SFTP_LIST,
-            description: "列出某台服务器上某个目录的内容。只读。\
-                          只能访问本地白名单里允许的目录，超出会被拒绝。",
+            description: "列出服务器上某个目录的内容。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -67,8 +85,94 @@ pub fn list() -> Vec<ToolInfo> {
             }),
         },
         ToolInfo {
+            name: TOOL_SFTP_READ,
+            description: "读服务器上的文本文件。返回文件内容。\
+                          只能读文本（含 NUL 字节的文件会被拒绝，请改用 sftp_download）；\
+                          默认最多读 256KB，更大的文件也会被拒绝而不是截断。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "path": { "type": "string", "description": "远端绝对路径" },
+                    "maxBytes": { "type": "integer", "description": "最多读多少字节，默认 262144，上限 1048576" }
+                },
+                "required": ["connection", "path"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
+            name: TOOL_SFTP_WRITE,
+            description: "把文本内容写入服务器上的文件（覆盖写，父目录需已存在）。\
+                          单次最多 1MB；更大的内容请用 sftp_upload。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "path": { "type": "string", "description": "远端绝对路径" },
+                    "content": { "type": "string", "description": "要写入的完整文本" }
+                },
+                "required": ["connection", "path", "content"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
+            name: TOOL_SFTP_UPLOAD,
+            description: "把本机文件上传到服务器。文件较大时会等传输完成才返回。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "localPath": { "type": "string", "description": "本机绝对路径" },
+                    "remotePath": { "type": "string", "description": "远端绝对路径（含文件名）" }
+                },
+                "required": ["connection", "localPath", "remotePath"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
+            name: TOOL_SFTP_DOWNLOAD,
+            description: "把服务器上的文件下载到本机。目标父目录必须已存在。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "remotePath": { "type": "string", "description": "远端绝对路径" },
+                    "localPath": { "type": "string", "description": "本机绝对路径；若指向已存在的目录则沿用远端文件名" }
+                },
+                "required": ["connection", "remotePath", "localPath"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
+            name: TOOL_SFTP_MKDIR,
+            description: "在服务器上新建目录（单层，父目录需已存在）。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "path": { "type": "string", "description": "远端绝对路径" }
+                },
+                "required": ["connection", "path"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
+            name: TOOL_SFTP_RENAME,
+            description: "在服务器上重命名或移动文件/目录。",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "connection": { "type": "string", "description": "连接名称或 id" },
+                    "from": { "type": "string", "description": "远端源绝对路径" },
+                    "to": { "type": "string", "description": "远端目标绝对路径" }
+                },
+                "required": ["connection", "from", "to"],
+                "additionalProperties": false
+            }),
+        },
+        ToolInfo {
             name: TOOL_LOAD_SNAPSHOT,
-            description: "取某台服务器的负载快照（CPU、内存、磁盘、网络、进程数）。只读。",
+            description: "取服务器的负载快照（CPU、内存、磁盘、网络、进程数）。只读。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -80,9 +184,9 @@ pub fn list() -> Vec<ToolInfo> {
         },
         ToolInfo {
             name: TOOL_EXEC,
-            description: "在该服务器上执行一条**本地白名单里预先允许**的只读命令。\
-                          复合命令（;、管道、重定向等）一律拒绝；未授权的命令会被拒绝。\
-                          调用前先用 list_connections 确认连接可用。",
+            description: "在服务器上执行一条命令。默认允许任意单条命令；\
+                          复合命令（;、管道、重定向、$() 等）一律拒绝，需要多步就分多次调用。\
+                          如果用户配了命令白名单，则只能执行白名单里的命令。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -124,7 +228,10 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
             .unwrap_or_default()
             .to_string()
     } else {
-        arguments.map(ToString::to_string).unwrap_or_default()
+        // sftp_write 的 content 可能有 1MB，原样落盘会把 audit.jsonl 撑爆；
+        // 正文本来也不该进审计，留个能定位的摘要就够
+        let raw = arguments.map(ToString::to_string).unwrap_or_default();
+        truncate_for_audit(&raw, AUDIT_ARG_CHARS)
     };
     let client = ctx.client();
 
@@ -146,6 +253,12 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
     let result: Result<Outcome, RpcError> = match name {
         TOOL_LIST_CONNECTIONS => list_connections(ctx).await,
         TOOL_SFTP_LIST => sftp_list(ctx, arguments).await,
+        TOOL_SFTP_READ => sftp_read(ctx, arguments).await,
+        TOOL_SFTP_WRITE => sftp_write(ctx, arguments).await,
+        TOOL_SFTP_UPLOAD => sftp_upload(ctx, arguments).await,
+        TOOL_SFTP_DOWNLOAD => sftp_download(ctx, arguments).await,
+        TOOL_SFTP_MKDIR => sftp_mkdir(ctx, arguments).await,
+        TOOL_SFTP_RENAME => sftp_rename(ctx, arguments).await,
         TOOL_LOAD_SNAPSHOT => load_snapshot(ctx, arguments).await,
         TOOL_EXEC => exec_command(ctx, arguments).await,
         _ => unreachable!("闸门已经过滤过工具名"),
@@ -205,8 +318,8 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
              需要开放请到「设置 → MCP 接入」勾选。",
         )),
         Outcome::Denied { reason, .. } => Ok(failed(format!(
-            "已被本地白名单拒绝（{}）。这个工具或路径没有对 MCP 开放。\
-             请让管理员在「设置 → MCP 接入」里开启；不要尝试改用别的方式达到同样目的。",
+            "已被本地配置拒绝（{}）。这台机器或这个工具没有对 MCP 开放。\
+             请让用户在「设置 → MCP 接入」里放开；不要尝试改用别的方式达到同样目的。",
             reason.as_str()
         ))),
         Outcome::Error { err, .. } => Ok(backend_failure(&err)),
@@ -283,13 +396,7 @@ async fn sftp_list(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, 
     let args = arguments.cloned().unwrap_or_else(|| json!({}));
     let spec = required_str(&args, "connection")?;
     let path = required_str(&args, "path")?;
-
-    if !path.starts_with('/') {
-        return Err(RpcError::new(
-            INVALID_PARAMS,
-            format!("path 必须是远端绝对路径（以 / 开头），收到：{path}"),
-        ));
-    }
+    ensure_remote_absolute(&path)?;
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
@@ -345,16 +452,424 @@ async fn list_remote(
     id: &str,
     path: &str,
 ) -> crate::error::AppResult<Vec<crate::sftp::RemoteEntry>> {
+    let conn = open_sftp(ctx, id).await?;
+    let rows = crate::sftp::list::read_dir(&conn.session, path).await;
+    conn.close().await;
+    rows
+}
+
+/// 单开一条 SFTP 连接，用完由调用方关。
+///
+/// 不复用 GUI 的会话表：MCP 是独立进程，那边的 sessionId 根本拿不到；
+/// 而且每次调用都是短命操作，挂着一条连接只会让服务器上多一个没人用的 sshd。
+async fn open_sftp(
+    ctx: &Context,
+    id: &str,
+) -> crate::error::AppResult<std::sync::Arc<crate::sftp::SftpConn>> {
     let state = ctx.app_state()?;
     let prepared =
         crate::commands::connections::prepare_probe(&state, Some(id.to_string()), None, None)
             .await?;
-
     let (_opened, conn) =
         crate::sftp::session::open(ctx.next_session_id(), prepared.request).await?;
-    let rows = crate::sftp::list::read_dir(&conn.session, path).await;
+    Ok(conn)
+}
+
+fn ensure_remote_absolute(path: &str) -> Result<(), RpcError> {
+    if !path.starts_with('/') {
+        return Err(RpcError::new(
+            INVALID_PARAMS,
+            format!("path 必须是远端绝对路径（以 / 开头），收到：{path}"),
+        ));
+    }
+    Ok(())
+}
+
+/// 读远端文本文件。
+async fn sftp_read(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let path = required_str(&args, "path")?;
+    ensure_remote_absolute(&path)?;
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_READ) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    if !McpConfig::allows_path(&policy, &path) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    let limit = args
+        .get("maxBytes")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_READ_BYTES)
+        .clamp(1, MAX_READ_BYTES);
+
+    match read_remote(ctx, &record.id, &path, limit).await {
+        Ok((body, size)) => {
+            let header = format!("{path}（{size} 字节，{} 行）", body.lines().count().max(1));
+            Ok(Outcome::Ok {
+                value: text(format!("{header}\n\n{body}")),
+                connection: record.name,
+            })
+        }
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
+}
+
+async fn read_remote(
+    ctx: &Context,
+    id: &str,
+    path: &str,
+    limit: u64,
+) -> crate::error::AppResult<(String, u64)> {
+    let conn = open_sftp(ctx, id).await?;
+
+    let result = async {
+        let Some((is_dir, size)) = crate::sftp::ops::stat(&conn.session, path).await? else {
+            return Err(AppError::with_detail(
+                ErrCode::SftpNotFound,
+                format!("远端没有这个路径: {path}"),
+            ));
+        };
+        if is_dir {
+            return Err(AppError::validation(format!(
+                "{path} 是目录，列目录请用 sftp_list"
+            )));
+        }
+        if size > limit {
+            return Err(AppError::validation(format!(
+                "{path} 有 {size} 字节，超过本次读取上限 {limit}。\
+                 要整份内容请用 sftp_download，或调大 maxBytes（硬上限 {MAX_READ_BYTES}）"
+            )));
+        }
+
+        let mut file = conn
+            .session
+            .open(path)
+            .await
+            .map_err(crate::sftp::map_error)?;
+        let mut buf = Vec::with_capacity(size as usize);
+        file.read_to_end(&mut buf).await.map_err(|err| {
+            AppError::with_detail(ErrCode::SftpIoError, format!("读文件失败: {err}"))
+        })?;
+
+        // NUL 字节是二进制文件的可靠特征。直接当文本返回会被模型当成乱码，
+        // 既浪费上下文又办不成事，不如明确让它换 sftp_download。
+        if buf.contains(&0u8) {
+            return Err(AppError::validation(format!(
+                "{path} 看起来是二进制文件，请用 sftp_download 取回本机处理"
+            )));
+        }
+        let body = String::from_utf8(buf).map_err(|_| {
+            AppError::validation(format!(
+                "{path} 不是有效 UTF-8 文本，请用 sftp_download 取回本机处理"
+            ))
+        })?;
+        Ok((body, size))
+    }
+    .await;
+
     conn.close().await;
-    rows
+    result
+}
+
+/// 覆盖写远端文件。
+async fn sftp_write(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let path = required_str(&args, "path")?;
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::new(INVALID_PARAMS, "缺少参数 content"))?
+        .to_string();
+    ensure_remote_absolute(&path)?;
+
+    if content.len() > MAX_WRITE_BYTES {
+        return Err(RpcError::new(
+            INVALID_PARAMS,
+            format!(
+                "content 有 {} 字节，超过单次写入上限 {MAX_WRITE_BYTES}；大文件请用 sftp_upload",
+                content.len()
+            ),
+        ));
+    }
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_WRITE) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    if !McpConfig::allows_path(&policy, &path) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    match write_remote(ctx, &record.id, &path, &content).await {
+        Ok(bytes) => Ok(Outcome::Ok {
+            value: text(format!("已写入 {path}，{bytes} 字节")),
+            connection: record.name,
+        }),
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
+}
+
+async fn write_remote(
+    ctx: &Context,
+    id: &str,
+    path: &str,
+    content: &str,
+) -> crate::error::AppResult<u64> {
+    let conn = open_sftp(ctx, id).await?;
+
+    let result = async {
+        let mut file = conn
+            .session
+            .create(path)
+            .await
+            .map_err(crate::sftp::map_error)?;
+        file.write_all(content.as_bytes()).await.map_err(|err| {
+            AppError::with_detail(ErrCode::SftpIoError, format!("写文件失败: {err}"))
+        })?;
+        file.close().await.map_err(|err| {
+            AppError::with_detail(ErrCode::SftpIoError, format!("关闭远端文件失败: {err}"))
+        })?;
+        Ok(content.len() as u64)
+    }
+    .await;
+
+    conn.close().await;
+    result
+}
+
+/// 本机 → 远端。
+async fn sftp_upload(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let local_path = required_str(&args, "localPath")?;
+    let remote_path = required_str(&args, "remotePath")?;
+    ensure_remote_absolute(&remote_path)?;
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_UPLOAD) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    if !McpConfig::allows_path(&policy, &remote_path) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    let local = std::path::PathBuf::from(&local_path);
+    let state = ctx.app_state().map_err(internal)?;
+    // 应用自己的数据目录里有加密凭据和主机指纹，绝不能被当成上传源。
+    let protected: [&std::path::Path; 2] = [&state.paths.data_dir, &state.paths.backup_dir];
+    crate::sftp::transfer::ensure_upload_source(&local, &protected).map_err(internal)?;
+
+    match upload_file(ctx, &record.id, &local, &remote_path).await {
+        Ok(bytes) => Ok(Outcome::Ok {
+            value: text(format!("已上传 {local_path} → {remote_path}，{bytes} 字节")),
+            connection: record.name,
+        }),
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
+}
+
+async fn upload_file(
+    ctx: &Context,
+    id: &str,
+    local: &std::path::Path,
+    remote_path: &str,
+) -> crate::error::AppResult<u64> {
+    let conn = open_sftp(ctx, id).await?;
+    let state = ctx.app_state()?;
+    let protected: [&std::path::Path; 2] = [&state.paths.data_dir, &state.paths.backup_dir];
+    let emit: crate::sftp::transfer::ProgressFn = Box::new(|_| {});
+
+    let result = crate::sftp::transfer::upload(
+        &conn.session,
+        local,
+        remote_path,
+        ctx.next_session_id(),
+        tokio_util::sync::CancellationToken::new(),
+        emit,
+        &protected,
+    )
+    .await;
+
+    conn.close().await;
+    result
+}
+
+/// 远端 → 本机。
+async fn sftp_download(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let remote_path = required_str(&args, "remotePath")?;
+    let local_path = required_str(&args, "localPath")?;
+    ensure_remote_absolute(&remote_path)?;
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_DOWNLOAD) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    if !McpConfig::allows_path(&policy, &remote_path) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    let state = ctx.app_state().map_err(internal)?;
+    let mut local = std::path::PathBuf::from(&local_path);
+    // 给一个已存在的目录时沿用远端文件名，省得调用方每次都自己拼
+    if local.is_dir() {
+        let name = remote_path.rsplit('/').next().unwrap_or_default();
+        if name.is_empty() {
+            return Err(RpcError::new(
+                INVALID_PARAMS,
+                "remotePath 缺少文件名，无法确定本地落盘名称",
+            ));
+        }
+        local = local.join(name);
+    }
+    // localPath 是调用方给的，不能假设它来自文件对话框
+    if local.starts_with(&state.paths.data_dir) {
+        return Err(RpcError::new(
+            INVALID_PARAMS,
+            "不允许把下载目标放进应用数据目录",
+        ));
+    }
+
+    match download_file(ctx, &record.id, &remote_path, &local).await {
+        Ok(bytes) => Ok(Outcome::Ok {
+            value: text(format!(
+                "已下载 {remote_path} → {}，{bytes} 字节",
+                local.display()
+            )),
+            connection: record.name,
+        }),
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
+}
+
+async fn download_file(
+    ctx: &Context,
+    id: &str,
+    remote_path: &str,
+    local: &std::path::Path,
+) -> crate::error::AppResult<u64> {
+    let conn = open_sftp(ctx, id).await?;
+    let emit: crate::sftp::transfer::ProgressFn = Box::new(|_| {});
+
+    let result = crate::sftp::transfer::download(
+        &conn.session,
+        remote_path,
+        local,
+        ctx.next_session_id(),
+        tokio_util::sync::CancellationToken::new(),
+        emit,
+    )
+    .await;
+
+    conn.close().await;
+    result
+}
+
+/// 新建目录。
+async fn sftp_mkdir(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let path = required_str(&args, "path")?;
+    ensure_remote_absolute(&path)?;
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_MKDIR) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    if !McpConfig::allows_path(&policy, &path) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    match open_sftp(ctx, &record.id).await {
+        Ok(conn) => {
+            let result = crate::sftp::ops::create_dir(&conn.session, &path).await;
+            conn.close().await;
+            match result {
+                Ok(()) => Ok(Outcome::Ok {
+                    value: text(format!("已创建目录 {path}")),
+                    connection: record.name,
+                }),
+                Err(err) => Ok(Outcome::Error {
+                    connection: record.name,
+                    err,
+                }),
+            }
+        }
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
+}
+
+/// 重命名 / 移动。
+async fn sftp_rename(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, RpcError> {
+    let args = arguments.cloned().unwrap_or_else(|| json!({}));
+    let spec = required_str(&args, "connection")?;
+    let from = required_str(&args, "from")?;
+    let to = required_str(&args, "to")?;
+    ensure_remote_absolute(&from)?;
+    ensure_remote_absolute(&to)?;
+
+    let record = resolve_record(ctx, &spec).await?;
+    let cfg = ctx.config().load();
+    let policy = match gated(&cfg, &record, TOOL_SFTP_RENAME) {
+        Ok(policy) => policy,
+        Err(reason) => return Ok(denied(&record, reason)),
+    };
+    // 两头都要过：只校验 from 的话，`rename("/tmp/a", "/etc/passwd")` 就绕过去了
+    if !McpConfig::allows_path(&policy, &from) || !McpConfig::allows_path(&policy, &to) {
+        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    }
+
+    match open_sftp(ctx, &record.id).await {
+        Ok(conn) => {
+            let result = crate::sftp::ops::rename(&conn.session, &from, &to).await;
+            conn.close().await;
+            match result {
+                Ok(()) => Ok(Outcome::Ok {
+                    value: text(format!("已重命名 {from} → {to}")),
+                    connection: record.name,
+                }),
+                Err(err) => Ok(Outcome::Error {
+                    connection: record.name,
+                    err,
+                }),
+            }
+        }
+        Err(err) => Ok(Outcome::Error {
+            connection: record.name,
+            err,
+        }),
+    }
 }
 
 /// 采一次负载快照。走 `monitor` 里同一条采样命令，所以数字和界面看板一致。
@@ -426,7 +941,7 @@ async fn run_exec(
     ctx: &Context,
     id: &str,
     command: &str,
-    policy: &super::config::ExecPolicy,
+    policy: &ExecPolicy,
 ) -> crate::error::AppResult<String> {
     let state = ctx.app_state()?;
     let prepared =
@@ -491,6 +1006,20 @@ fn required_str(args: &Value, key: &str) -> Result<String, RpcError> {
         .ok_or_else(|| RpcError::new(INVALID_PARAMS, format!("缺少参数 {key}")))
 }
 
+/// 本地环境问题（拿不到密钥、库打不开）不该伪装成「参数错了」。
+fn internal(err: AppError) -> RpcError {
+    RpcError::new(INTERNAL_ERROR, describe(&err))
+}
+
+/// 按**字符**边界截断，不能按字节切 —— 切在 UTF-8 中间会 panic。
+fn truncate_for_audit(raw: &str, limit: usize) -> String {
+    if raw.chars().count() <= limit {
+        return raw.to_string();
+    }
+    let head: String = raw.chars().take(limit).collect();
+    format!("{head}…（共 {} 字符）", raw.chars().count())
+}
+
 fn text(body: impl Into<String>) -> Value {
     json!({
         "content": [{ "type": "text", "text": body.into() }],
@@ -532,26 +1061,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exposes_the_four_whitelisted_tools() {
+    fn exposes_every_declared_tool_in_stable_order() {
         let names: Vec<&str> = list().iter().map(|tool| tool.name).collect();
         assert_eq!(
             names,
-            ["list_connections", "sftp_list", "load_snapshot", "exec"]
+            ALL_TOOLS.to_vec(),
+            "清单顺序即声明顺序，宿主端靠它做 diff"
         );
     }
 
-    /// 红线：写操作、读文件内容、任意 URL 都不提供。
+    /// 文件类工具必须都挂在 ALL_TOOLS 上，否则配置校验会认为它们非法。
     #[test]
-    fn no_write_or_read_file_tools() {
+    fn file_tools_are_all_declared() {
         for tool in list() {
-            let name = tool.name;
             assert!(
-                !name.contains("write")
-                    && !name.contains("upload")
-                    && !name.contains("remove")
-                    && name != "read_file"
-                    && name != "open_url",
-                "{name} 不该出现"
+                ALL_TOOLS.contains(&tool.name),
+                "{} 不在 ALL_TOOLS 里，保存配置时会被判成未知工具",
+                tool.name
             );
         }
     }
@@ -612,6 +1138,17 @@ mod tests {
             .find(|t| t.name == "list_connections")
             .unwrap();
         assert!(tool.description.contains("不检测是否在线"));
+    }
+
+    #[test]
+    fn audit_args_are_truncated_without_breaking_utf8() {
+        let long = "日志".repeat(1000);
+        let cut = truncate_for_audit(&long, 512);
+        assert!(cut.chars().count() < 530, "应当被截断");
+        assert!(cut.ends_with("字符）"), "要说明被截断了");
+
+        let short = "df -h";
+        assert_eq!(truncate_for_audit(short, 512), short, "短参数原样保留");
     }
 
     #[test]

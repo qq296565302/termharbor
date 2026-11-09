@@ -22,9 +22,15 @@ import type {
 
 const TOOLS: { id: string; label: string; hint: string }[] = [
   { id: "list_connections", label: "列连接", hint: "查看有哪些可用服务器" },
-  { id: "sftp_list", label: "列目录", hint: "只读，受可见目录限制" },
+  { id: "sftp_list", label: "列目录", hint: "读远端目录结构" },
+  { id: "sftp_read", label: "读文件", hint: "读远端文本文件" },
+  { id: "sftp_write", label: "写文件", hint: "覆盖写远端文本文件" },
+  { id: "sftp_upload", label: "上传", hint: "本机文件传到服务器" },
+  { id: "sftp_download", label: "下载", hint: "服务器文件取回本机" },
+  { id: "sftp_mkdir", label: "建目录", hint: "远端新建目录" },
+  { id: "sftp_rename", label: "重命名", hint: "远端改名或移动" },
   { id: "load_snapshot", label: "负载快照", hint: "CPU / 内存 / 磁盘" },
-  { id: "exec", label: "执行命令", hint: "仅白名单里的单条只读命令" },
+  { id: "exec", label: "执行命令", hint: "执行单条命令" },
 ];
 
 function emptyPolicy(): McpConnectionPolicy {
@@ -32,7 +38,7 @@ function emptyPolicy(): McpConnectionPolicy {
     enabled: false,
     tools: [],
     paths: [],
-    exec: { allow: [], timeoutSecs: 10, maxOutputKb: 64 },
+    exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
   };
 }
 
@@ -51,6 +57,24 @@ function toggle(list: string[], value: string): string[] {
   return list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
 }
 
+/** 折叠状态下的一行摘要：空列表就是「不限」，必须直说。 */
+function summarize(policy: McpConnectionPolicy): string {
+  const parts: string[] = [];
+  parts.push(policy.tools.length === 0 ? "全部工具" : `${policy.tools.length} 个工具`);
+  parts.push(policy.paths.length === 0 ? "任意路径" : `${policy.paths.length} 个目录`);
+  if (policy.tools.length === 0 || policy.tools.includes("exec")) {
+    parts.push(
+      policy.exec.allow.length === 0 ? "任意单条命令" : `${policy.exec.allow.length} 条命令`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
 export default function McpSettings() {
   const [config, setConfig] = useState<McpConfig | null>(null);
   const [connections, setConnections] = useState<McpConfigView["connections"]>([]);
@@ -62,6 +86,7 @@ export default function McpSettings() {
   const [saved, setSaved] = useState(true);
   const [draftPath, setDraftPath] = useState<Record<string, string>>({});
   const [draftCommand, setDraftCommand] = useState<Record<string, string>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const loaded = useRef(false);
   const saveTimer = useRef<number | null>(null);
 
@@ -162,17 +187,14 @@ export default function McpSettings() {
     }
   };
 
-  /** 升级上来时默认全关，给一个安全的一键起步：只开不需要路径白名单的两个只读工具。 */
+  /** 一个都没开时的起步按钮：一次给全，不再让人逐项点。 */
   const quickStart = () => {
     setConfig((current) => {
       if (!current) return current;
       const next: Record<string, McpConnectionPolicy> = {};
       for (const item of connections) {
-        next[item.id] = {
-          ...(current.connections[item.id] ?? emptyPolicy()),
-          enabled: true,
-          tools: ["list_connections", "load_snapshot"],
-        };
+        const policy = current.connections[item.id] ?? emptyPolicy();
+        next[item.id] = { ...policy, enabled: true };
       }
       return { ...current, connections: next };
     });
@@ -193,7 +215,8 @@ export default function McpSettings() {
       </div>
 
       <p className="settings__notice">
-        没勾选的连接，智能体看不到也连不上。改动立即生效，无需重启宿主。
+        勾选一台服务器，就是把它整台交给智能体用：读文件、传文件、执行命令都在内。
+        没勾的连接，智能体看不到也连不上。改动立即生效，无需重启宿主。
         配置放产品根目录，卸载不会清掉：
         <span className="settings__path">{configPath}</span>
       </p>
@@ -202,9 +225,9 @@ export default function McpSettings() {
         <p className="settings__notice mcp__quick">
           当前所有连接都未开放，智能体还看不到任何服务器。
           <button type="button" onClick={quickStart}>
-            一键开放只读（列连接 + 负载快照）
+            全部开放
           </button>
-          列目录和执行命令仍需单独勾选。
+          之后可在每台机器上单独收窄范围。
         </p>
       ) : null}
 
@@ -233,125 +256,200 @@ export default function McpSettings() {
 
                   {policy.enabled ? (
                     <div className="mcp__body">
-                      <div className="mcp__row">
-                        <span className="mcp__caption">允许的工具</span>
-                        <div className="mcp__tools">
-                          {TOOLS.map((tool) => (
-                            <label
-                              className="mcp__tool"
-                              key={tool.id}
-                              title={tool.hint}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={policy.tools.includes(tool.id)}
-                                onChange={() =>
-                                  patch(item.id, { tools: toggle(policy.tools, tool.id) })
-                                }
-                              />
-                              {tool.label}
-                            </label>
-                          ))}
-                        </div>
+                      <div className="mcp__summary">
+                        <span className="mcp__caption">{summarize(policy)}</span>
+                        <button
+                          type="button"
+                          className="mcp__more"
+                          onClick={() =>
+                            setExpanded((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
+                          }
+                        >
+                          {expanded[item.id] ? "收起" : "细化权限"}
+                        </button>
                       </div>
 
-                      <div className="mcp__row">
-                        <span className="mcp__caption">可见目录</span>
-                        <div className="mcp__chips">
-                          {policy.paths.map((path) => (
-                            <span className="mcp__chip" key={path}>
-                              {path}
-                              <button
-                                type="button"
-                                className="mcp__chip-x"
-                                title="移除"
-                                onClick={() =>
-                                  patch(item.id, {
-                                    paths: policy.paths.filter((p) => p !== path),
-                                  })
-                                }
-                              >
-                                ×
-                              </button>
+                      {expanded[item.id] ? (
+                        <>
+                          <div className="mcp__row">
+                            <span className="mcp__caption">
+                              限制可用工具
+                              <em className="mcp__hint">
+                                {policy.tools.length === 0
+                                  ? "当前：全部工具，勾选后只给勾上的"
+                                  : `当前：仅勾选的 ${policy.tools.length} 个`}
+                              </em>
                             </span>
-                          ))}
-                          <input
-                            className="mcp__add"
-                            placeholder="/var/log 后回车"
-                            value={draftPath[item.id] ?? ""}
-                            onChange={(event) =>
-                              setDraftPath((prev) => ({ ...prev, [item.id]: event.target.value }))
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter") return;
-                              const value = (draftPath[item.id] ?? "").trim();
-                              if (!value.startsWith("/") || policy.paths.includes(value)) return;
-                              patch(item.id, { paths: [...policy.paths, value] });
-                              setDraftPath((prev) => ({ ...prev, [item.id]: "" }));
-                            }}
-                          />
-                        </div>
-                      </div>
+                            <div className="mcp__tools">
+                              {TOOLS.map((tool) => (
+                                <label className="mcp__tool" key={tool.id} title={tool.hint}>
+                                  <input
+                                    type="checkbox"
+                                    checked={policy.tools.includes(tool.id)}
+                                    onChange={() =>
+                                      patch(item.id, { tools: toggle(policy.tools, tool.id) })
+                                    }
+                                  />
+                                  {tool.label}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
 
-                      {policy.tools.includes("exec") ? (
-                        <div className="mcp__row">
-                          <span className="mcp__caption">允许的命令</span>
-                          <div className="mcp__chips">
-                            {policy.exec.allow.map((command) => (
-                              <span className="mcp__chip" key={command}>
-                                {command}
+                          <div className="mcp__row">
+                            <span className="mcp__caption">
+                              限制可访问路径
+                              <em className="mcp__hint">
+                                {policy.paths.length === 0
+                                  ? "留空 = 整台机器都能读写"
+                                  : "只允许这些目录及其子目录"}
+                              </em>
+                            </span>
+                            <div className="mcp__chips">
+                              {policy.paths.map((path) => (
+                                <span className="mcp__chip" key={path}>
+                                  {path}
+                                  <button
+                                    type="button"
+                                    className="mcp__chip-x"
+                                    title="移除"
+                                    onClick={() =>
+                                      patch(item.id, {
+                                        paths: policy.paths.filter((p) => p !== path),
+                                      })
+                                    }
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                              <input
+                                className="mcp__add"
+                                placeholder="/var/log 后回车"
+                                value={draftPath[item.id] ?? ""}
+                                onChange={(event) =>
+                                  setDraftPath((prev) => ({
+                                    ...prev,
+                                    [item.id]: event.target.value,
+                                  }))
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter") return;
+                                  const value = (draftPath[item.id] ?? "").trim();
+                                  if (!value.startsWith("/") || policy.paths.includes(value)) return;
+                                  patch(item.id, { paths: [...policy.paths, value] });
+                                  setDraftPath((prev) => ({ ...prev, [item.id]: "" }));
+                                }}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mcp__row">
+                            <span className="mcp__caption">
+                              限制可执行命令
+                              <em className="mcp__hint">
+                                {policy.exec.allow.length === 0
+                                  ? "留空 = 任意单条命令（复合命令始终拒绝）"
+                                  : "只允许这些命令前缀"}
+                              </em>
+                            </span>
+                            <div className="mcp__chips">
+                              {policy.exec.allow.map((command) => (
+                                <span className="mcp__chip" key={command}>
+                                  {command}
+                                  <button
+                                    type="button"
+                                    className="mcp__chip-x"
+                                    title="移除"
+                                    onClick={() =>
+                                      patchExec(item.id, {
+                                        allow: policy.exec.allow.filter((c) => c !== command),
+                                      })
+                                    }
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                            <div className="mcp__templates">
+                              {templates.map((command) => (
                                 <button
                                   type="button"
-                                  className="mcp__chip-x"
-                                  title="移除"
+                                  className={`mcp__tpl${policy.exec.allow.includes(command) ? " is-on" : ""}`}
+                                  key={command}
                                   onClick={() =>
                                     patchExec(item.id, {
-                                      allow: policy.exec.allow.filter((c) => c !== command),
+                                      allow: toggle(policy.exec.allow, command),
                                     })
                                   }
                                 >
-                                  ×
+                                  {command}
                                 </button>
-                              </span>
-                            ))}
+                              ))}
+                            </div>
+                            <input
+                              className="mcp__add"
+                              placeholder="自定义命令前缀后回车"
+                              value={draftCommand[item.id] ?? ""}
+                              onChange={(event) =>
+                                setDraftCommand((prev) => ({
+                                  ...prev,
+                                  [item.id]: event.target.value,
+                                }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                const value = (draftCommand[item.id] ?? "").trim();
+                                if (!value || policy.exec.allow.includes(value)) return;
+                                patchExec(item.id, {
+                                  allow: [...policy.exec.allow, value],
+                                });
+                                setDraftCommand((prev) => ({ ...prev, [item.id]: "" }));
+                              }}
+                            />
                           </div>
-                          <div className="mcp__templates">
-                            {templates.map((command) => (
-                              <button
-                                type="button"
-                                className={`mcp__tpl${policy.exec.allow.includes(command) ? " is-on" : ""}`}
-                                key={command}
-                                onClick={() =>
-                                  patchExec(item.id, {
-                                    allow: toggle(policy.exec.allow, command),
-                                  })
-                                }
-                              >
-                                {command}
-                              </button>
-                            ))}
+
+                          <div className="mcp__row">
+                            <span className="mcp__caption">执行限额</span>
+                            <div className="mcp__limits">
+                              <label>
+                                超时
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={300}
+                                  value={policy.exec.timeoutSecs}
+                                  onChange={(event) =>
+                                    patchExec(item.id, {
+                                      timeoutSecs: clampNumber(
+                                        Number(event.target.value),
+                                        1,
+                                        300,
+                                      ),
+                                    })
+                                  }
+                                />
+                                秒
+                              </label>
+                              <label>
+                                输出上限
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={512}
+                                  value={policy.exec.maxOutputKb}
+                                  onChange={(event) =>
+                                    patchExec(item.id, {
+                                      maxOutputKb: clampNumber(Number(event.target.value), 1, 512),
+                                    })
+                                  }
+                                />
+                                KB
+                              </label>
+                            </div>
                           </div>
-                          <input
-                            className="mcp__add"
-                            placeholder="自定义单条命令后回车（复合命令会被拒绝）"
-                            value={draftCommand[item.id] ?? ""}
-                            onChange={(event) =>
-                              setDraftCommand((prev) => ({
-                                ...prev,
-                                [item.id]: event.target.value,
-                              }))
-                            }
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter") return;
-                              const value = (draftCommand[item.id] ?? "").trim();
-                              if (!value || policy.exec.allow.includes(value)) return;
-                              patchExec(item.id, {
-                                allow: [...policy.exec.allow, value],
-                              });
-                              setDraftCommand((prev) => ({ ...prev, [item.id]: "" }));
-                            }}
-                          />
-                        </div>
+                        </>
                       ) : null}
                     </div>
                   ) : null}

@@ -16,18 +16,25 @@ use super::tools;
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// 给模型看的开场白。写得越具体，模型越少乱调工具。
-const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接访问服务器。\
-**能不能用取决于管理员在本地白名单里开了什么**：没开的连接看不到，\
-没开的工具/目录/命令会被明确拒绝。\
-先调用 list_connections 看有哪些连接可用，再按需使用 sftp_list / load_snapshot / exec。\
+const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接操作服务器。\
+**可用范围由用户对每台机器单独设定**：没勾的连接看不到；\
+勾了的连接默认可用全部工具，用户也可以再收窄到某些工具/目录/命令。\
+先调用 list_connections 看有哪些连接可用，然后按需使用：\
+sftp_list 列目录、sftp_read 读文本、sftp_write 写文本、\
+sftp_upload 与 sftp_download 和本机互传文件、sftp_mkdir 建目录、sftp_rename 改名移动、\
+load_snapshot 看负载、exec 执行命令。\
 不会也不能返回密码、私钥或主机指纹。\
 \
 纪律（很重要）：\
-1. 只用本服务的工具查询。不要启动图形界面、不要自己扫描端口、不要让用户去界面里手动点按钮。\
+1. 只用本服务的工具操作。不要启动图形界面、不要自己扫描端口、不要让用户去界面里手动点按钮。\
 2. list_connections 只是「已保存的连接」，不表示在线，也不表示能登录成功；不要据此断言在线状态。\
-3. 被白名单拒绝时，把拒绝原因原样转告用户，让管理员去「设置 → MCP 接入」开启；\
-   不要改用别的工具、别的路径或拼接命令绕过。\
-4. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。";
+3. exec 只接受单条命令。需要多步就分多次调用，不要试图用 ; 管道 重定向 $() 串起来 —— 这类命令会被拒绝。\
+   装包、部署这种多步操作，更好的做法是让用户放一个脚本，然后只调用那个脚本。\
+4. 被拒绝时把原因原样转告用户，让用户去「设置 → MCP 接入」调整；\
+   不要改用别的工具、别的路径或拼命令绕过。\
+5. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。\
+6. 写文件、上传、重命名会改变服务器状态。动手前确认目标路径；\
+   要覆盖已有文件时先 sftp_read 看看原来是什么，不要盲写。";
 
 pub struct Server {
     ctx: Context,
@@ -160,8 +167,8 @@ mod tests {
             value["result"]["instructions"]
                 .as_str()
                 .unwrap()
-                .contains("白名单"),
-            "开场白里要说清权限来自本地白名单"
+                .contains("用户对每台机器单独设定"),
+            "开场白里要说清权限来自本机对每台机器的设定"
         );
     }
 
@@ -202,7 +209,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_four_tools() {
+    async fn tools_list_covers_every_capability() {
         let value = call(
             &server(),
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#,
@@ -211,9 +218,14 @@ mod tests {
         let tools = value["result"]["tools"]
             .as_array()
             .expect("要有 tools 数组");
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), crate::mcp::config::ALL_TOOLS.len());
         assert_eq!(tools[0]["name"], "list_connections");
         assert!(tools[0]["inputSchema"]["type"] == "object");
+
+        // 读写都要有，缺一个 agent 就只能看不能干
+        for name in ["sftp_read", "sftp_write", "sftp_upload", "sftp_download"] {
+            assert!(tools.iter().any(|tool| tool["name"] == name), "少了 {name}");
+        }
     }
 
     /// 造一台"数据库里有、但白名单没开"的机器。

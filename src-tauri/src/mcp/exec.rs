@@ -36,9 +36,12 @@ impl DenyReason {
 
 /// 一条命令能不能执行。
 ///
-/// `allow` 是**分词后的 token 序列前缀**，不是字符串前缀：
-/// 白名单 `df -h` 不该让 `df -hxxx` 通过，但可以让 `df -h /var` 通过
-/// （多出来的参数属于同一条只读命令）。
+/// `allow` 留空 = 任意**单条**命令（默认档，0.1.28 起）。填了就是收窄，匹配的是
+/// **分词后的 token 序列前缀**，不是字符串前缀：白名单 `df -h` 不该让 `df -hxxx`
+/// 通过，但可以让 `df -h /var` 通过（多出来的参数属于同一条命令）。
+///
+/// 复合字符检查在任何情况下都执行 —— 它不是权限门槛，而是「一条命令」这个契约本身。
+/// agent 要多步操作就多调几次，能力没有损失。
 pub fn validate_command(command: &str, allow: &[String]) -> Result<(), DenyReason> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -47,6 +50,10 @@ pub fn validate_command(command: &str, allow: &[String]) -> Result<(), DenyReaso
 
     if has_shell_metachar(trimmed) {
         return Err(DenyReason::CompoundCommand);
+    }
+
+    if allow.is_empty() {
+        return Ok(());
     }
 
     let asked: Vec<&str> = trimmed.split_whitespace().collect();
@@ -150,13 +157,37 @@ mod tests {
         );
     }
 
-    /// 白名单为空 = 什么都不许执行，这是默认状态。
+    /// 白名单没配 = 任意单条命令都放行。这是 0.1.28 的默认档：
+    /// 用户勾了连接就该能干活，不该先猜该填什么命令。
     #[test]
-    fn empty_allowlist_denies_everything() {
-        assert_eq!(
-            validate_command("df -h", &[]),
-            Err(DenyReason::CommandNotAllowed)
-        );
+    fn empty_allowlist_permits_any_single_command() {
+        for cmd in [
+            "df -h",
+            "apt-get install -y nginx",
+            "systemctl restart nginx",
+            "tar -xzf /tmp/a.tar.gz -C /opt",
+            "python3 /opt/deploy.py release",
+        ] {
+            assert_eq!(validate_command(cmd, &[]), Ok(()), "应当放行: {cmd}");
+        }
+    }
+
+    /// 但「单条」这个契约不放松：复合命令依然一律拒。
+    #[test]
+    fn empty_allowlist_still_refuses_compound_commands() {
+        for cmd in [
+            "df -h; rm -rf /",
+            "apt-get update && apt-get install -y nginx",
+            "cat x | grep y",
+            "echo a > /etc/passwd",
+            "rm -rf $(cat list.txt)",
+        ] {
+            assert_eq!(
+                validate_command(cmd, &[]),
+                Err(DenyReason::CompoundCommand),
+                "该拦住：{cmd}"
+            );
+        }
     }
 
     #[test]

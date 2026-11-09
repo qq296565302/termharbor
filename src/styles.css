@@ -3401,6 +3401,67 @@ button {
   border-top: 1px solid var(--border);
 }
 
+.mcp__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.mcp__more {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mcp__more:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.mcp__hint {
+  margin-left: 8px;
+  font-style: normal;
+  color: var(--text-faint);
+}
+
+.mcp__limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.mcp__limits label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcp__limits input {
+  width: 62px;
+  padding: 3px 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.mcp__limits input:focus {
+  outline: none;
+  border-color: var(--border-strong);
+}
+
 .mcp__row {
   display: flex;
   flex-direction: column;

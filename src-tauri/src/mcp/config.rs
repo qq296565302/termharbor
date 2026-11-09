@@ -1,13 +1,20 @@
-//! MCP 白名单配置。
+//! MCP 配置。
 //!
 //! 文件放在**产品根目录**（`%APPDATA%\TermHarbor\mcp.json`），不在卸载器会删的
-//! bundle id 目录里 —— 安全配置不该随「删除应用数据」被悄悄清掉。
+//! bundle id 目录里 —— 配置不该随「删除应用数据」被悄悄清掉。
 //!
 //! 三条硬规矩：
-//! 1. **fail-closed**：文件缺失、格式错、字段不认识，一律按「全关」处理，
-//!    绝不退化成「没配置就全放开」。
+//! 1. **连接级 fail-closed**：文件缺失、格式错、字段不认识，一律按「全关」处理，
+//!    绝不退化成「没配置就全放开」。用户必须显式勾一次连接。
 //! 2. **热加载**：按 mtime 缓存，改完不用重启 MCP 宿主。
 //! 3. **原子写**：GUI 写文件时先写临时文件再 rename，避免 MCP 读到半截内容。
+//!
+//! ## 授权语义：勾选即授权，列表只用于收窄
+//!
+//! 0.1.27 是「逐项白名单」：勾了连接还要勾工具、加路径、加命令，三步缺一步就干不了活。
+//! 心智模型错了 —— 用户给出去的是一个 SSH 连接，那本来就是整台机器。
+//! 0.1.28 起反过来：`enabled: true` 就是这台机器的全部能力，三个列表留空表示不限，
+//! 填了才变成收窄。旧配置里的非空列表继续按「只允许这些」解释，语义不变。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +29,12 @@ pub const FILE_NAME: &str = "mcp.json";
 
 pub const TOOL_LIST_CONNECTIONS: &str = "list_connections";
 pub const TOOL_SFTP_LIST: &str = "sftp_list";
+pub const TOOL_SFTP_READ: &str = "sftp_read";
+pub const TOOL_SFTP_WRITE: &str = "sftp_write";
+pub const TOOL_SFTP_UPLOAD: &str = "sftp_upload";
+pub const TOOL_SFTP_DOWNLOAD: &str = "sftp_download";
+pub const TOOL_SFTP_MKDIR: &str = "sftp_mkdir";
+pub const TOOL_SFTP_RENAME: &str = "sftp_rename";
 pub const TOOL_LOAD_SNAPSHOT: &str = "load_snapshot";
 pub const TOOL_EXEC: &str = "exec";
 
@@ -29,12 +42,20 @@ pub const TOOL_EXEC: &str = "exec";
 pub const ALL_TOOLS: &[&str] = &[
     TOOL_LIST_CONNECTIONS,
     TOOL_SFTP_LIST,
+    TOOL_SFTP_READ,
+    TOOL_SFTP_WRITE,
+    TOOL_SFTP_UPLOAD,
+    TOOL_SFTP_DOWNLOAD,
+    TOOL_SFTP_MKDIR,
+    TOOL_SFTP_RENAME,
     TOOL_LOAD_SNAPSHOT,
     TOOL_EXEC,
 ];
 
-pub const DEFAULT_TIMEOUT_SECS: u64 = 10;
-pub const MAX_TIMEOUT_SECS: u64 = 30;
+/// 默认超时。装个包、跑个部署脚本都在这个量级内，太短会让「能用」变成「总超时」。
+pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
+/// 硬上限。再长就不该由 agent 同步等着了，应该转后台。
+pub const MAX_TIMEOUT_SECS: u64 = 300;
 pub const DEFAULT_MAX_OUTPUT_KB: usize = 64;
 pub const MAX_OUTPUT_KB_LIMIT: usize = 512;
 
@@ -74,12 +95,13 @@ impl Default for McpConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionPolicy {
+    /// 唯一的必选开关：勾了就是「这台机器交给 agent 用」。
     #[serde(default)]
     pub enabled: bool,
-    /// 省略 = 这个工具一个都不给
+    /// 留空 = 全部工具；非空 = 只允许列出的这些（收窄用）
     #[serde(default)]
     pub tools: Vec<String>,
-    /// `sftp_list` 允许的目录前缀；省略 = 不能列任何目录
+    /// 留空 = 任意远端路径；非空 = 只能碰这些目录前缀（收窄用）
     #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
@@ -89,7 +111,7 @@ pub struct ConnectionPolicy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecPolicy {
-    /// 命令 token 序列前缀白名单，默认空 = 不执行任何命令
+    /// 留空 = 任意**单条**命令（复合字符仍然拒绝）；非空 = 只允许这些 token 前缀
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default = "default_timeout")]
@@ -139,13 +161,20 @@ impl McpConfig {
         }
     }
 
+    /// 工具是否可用。`tools` 留空表示这台机器全部工具都开。
     pub fn allows_tool(&self, policy: &ConnectionPolicy, tool: &str) -> bool {
-        policy.enabled && policy.tools.iter().any(|allowed| allowed == tool)
+        policy.enabled
+            && (policy.tools.is_empty() || policy.tools.iter().any(|allowed| allowed == tool))
     }
 
-    /// 路径必须落在某个已配置的前缀里。只做字符串前缀 + 边界检查，
-    /// 不做路径规范化 —— 规范化交给服务端，本地乱改反而容易绕过。
+    /// 路径是否可访问。`paths` 留空表示不限；填了才按前缀收窄。
+    ///
+    /// 只做字符串前缀 + 边界检查，不做路径规范化 —— 规范化交给服务端，
+    /// 本地乱改反而容易绕过（`/var/log/../etc` 这种由对端 resolve 才是真相）。
     pub fn allows_path(policy: &ConnectionPolicy, path: &str) -> bool {
+        if policy.paths.is_empty() {
+            return true;
+        }
         policy.paths.iter().any(|prefix| {
             let prefix = prefix.trim_end_matches('/');
             path == prefix || path.starts_with(&format!("{prefix}/"))
@@ -300,6 +329,52 @@ mod tests {
         assert!(McpConfig::allows_path(&policy, "/var/log"));
         assert!(McpConfig::allows_path(&policy, "/var/log/nginx"));
         assert!(!McpConfig::allows_path(&policy, "/var/logger"));
+        assert!(!McpConfig::allows_path(&policy, "/etc"));
+    }
+
+    /// 0.1.28 的核心语义：勾了连接就等于给了这台机器的全部能力。
+    /// 空列表是「不限」，不是「全禁」。
+    #[test]
+    fn empty_lists_mean_unrestricted_not_denied() {
+        let cfg = McpConfig::default();
+        let policy = ConnectionPolicy {
+            enabled: true,
+            ..Default::default()
+        };
+
+        for tool in ALL_TOOLS {
+            assert!(
+                cfg.allows_tool(&policy, tool),
+                "{tool} 应当默认可用于已启用的连接"
+            );
+        }
+        assert!(McpConfig::allows_path(&policy, "/etc/shadow"));
+        assert!(McpConfig::allows_path(&policy, "/"));
+    }
+
+    /// 但连接本身没勾，一切照旧全关 —— 升级不能把用户的服务器静默交出去。
+    #[test]
+    fn disabled_connection_denies_everything_even_with_empty_lists() {
+        let cfg = McpConfig::default();
+        let policy = ConnectionPolicy::default();
+        for tool in ALL_TOOLS {
+            assert!(!cfg.allows_tool(&policy, tool));
+        }
+    }
+
+    /// 填了列表就回到收窄语义，旧配置（0.1.27 写的）不需要迁移。
+    #[test]
+    fn non_empty_list_still_narrows() {
+        let cfg = McpConfig::default();
+        let policy = ConnectionPolicy {
+            enabled: true,
+            tools: vec![TOOL_SFTP_LIST.into()],
+            paths: vec!["/var/log".into()],
+            ..Default::default()
+        };
+        assert!(cfg.allows_tool(&policy, TOOL_SFTP_LIST));
+        assert!(!cfg.allows_tool(&policy, TOOL_EXEC));
+        assert!(!cfg.allows_tool(&policy, TOOL_SFTP_WRITE));
         assert!(!McpConfig::allows_path(&policy, "/etc"));
     }
 
