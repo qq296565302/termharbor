@@ -18,6 +18,11 @@ pub struct AppPaths {
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
     pub db_file: PathBuf,
+    /// 产品根目录（Windows 上就是 `%APPDATA%`）。
+    ///
+    /// MCP 的 `mcp.json` 白名单和 `audit.jsonl` 审计日志放这里，而不是 data_dir ——
+    /// 安全配置和审计记录不该随「删除应用数据」被清掉。
+    pub product_dir: PathBuf,
     /// 快照目录。**故意不在 data_dir 里面** —— 卸载器会把整个
     /// `%APPDATA%\com.termharbor.app` 删掉（含这里的 data_dir），
     /// 快照必须放在那条删除路径之外才有意义，见 `storage::backup`。
@@ -59,15 +64,17 @@ impl AppPaths {
         // 不是 `app_data_dir`。少往上走一层就会落到
         // `%APPDATA%\com.termharbor.app\TermHarbor\backups` —— 那正好在卸载器
         // `RmDir /r "$APPDATA\${BUNDLEID}"` 的删除路径里，安全网等于没有。
-        let backup_dir = data_dir
+        let product_dir = data_dir
             .parent()
-            .map(crate::storage::backup::dir)
-            .unwrap_or_else(|| crate::storage::backup::dir(&data_dir));
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.clone());
+        let backup_dir = crate::storage::backup::dir(&product_dir);
 
         Self {
             db_file: data_dir.join("termharbor.db"),
             data_dir,
             log_dir,
+            product_dir,
             backup_dir,
         }
     }

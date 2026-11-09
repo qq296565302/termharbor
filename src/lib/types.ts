@@ -286,3 +286,51 @@ export interface LoadSnapshot {
   windowMs: number;
   warning: string | null;
 }
+
+/** MCP 白名单（对应 `mcp::config`） */
+export interface McpExecPolicy {
+  allow: string[];
+  timeoutSecs: number;
+  maxOutputKb: number;
+}
+
+export interface McpConnectionPolicy {
+  enabled: boolean;
+  tools: string[];
+  paths: string[];
+  exec: McpExecPolicy;
+}
+
+export interface McpConfig {
+  version: number;
+  defaultEnabled: boolean;
+  connections: Record<string, McpConnectionPolicy>;
+}
+
+export interface McpConnectionBrief {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+}
+
+export interface McpConfigView {
+  config: McpConfig;
+  connections: McpConnectionBrief[];
+  commandTemplates: string[];
+  configPath: string;
+  auditPath: string;
+}
+
+export interface McpAuditEntry {
+  tsMs: number;
+  client: string;
+  tool: string;
+  connection: string;
+  args: string;
+  decision: string;
+  reason: string;
+  durationMs: number;
+  bytes: number;
+  result: string;
+}

@@ -13,6 +13,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use super::audit::AuditLog;
+use super::config::ConfigStore;
 use crate::crypto::{default_provider, FieldCipher};
 use crate::error::AppResult;
 use crate::logging::LoggingGuard;
@@ -27,31 +29,72 @@ pub struct Context {
     /// 只有需要连服务器时才建（这一步才会去取密钥）
     state: OnceLock<Arc<AppState>>,
     seq: AtomicU64,
+    /// 白名单。按 mtime 热加载，改配置不用重启宿主。
+    config: ConfigStore,
+    /// 审计日志，只追加。
+    audit: AuditLog,
+    /// 宿主 initialize 时自报的名字。**只用于记录，绝不参与放行判断**。
+    client: Mutex<String>,
 }
 
 impl Context {
     pub fn new() -> AppResult<Self> {
+        let paths = AppPaths::resolve_headless()?;
+        let config = ConfigStore::new(&paths.product_dir);
+        let audit = AuditLog::new(&paths.product_dir);
         Ok(Self {
-            paths: AppPaths::resolve_headless()?,
+            paths,
             db: OnceLock::new(),
             state: OnceLock::new(),
             seq: AtomicU64::new(0),
+            config,
+            audit,
+            client: Mutex::new("unknown".into()),
         })
     }
 
     #[cfg(test)]
     pub fn for_tests(data_dir: std::path::PathBuf) -> Self {
-        let paths = AppPaths::under(data_dir.clone(), data_dir);
+        let mut paths = AppPaths::under(data_dir.clone(), data_dir.clone());
+        // 测试各自独立：不然所有用例共用系统临时目录里的 mcp.json / audit.jsonl，
+        // 并行跑时一个用例写的配置会污染另一个。
+        paths.product_dir = data_dir.clone();
+        let config = ConfigStore::new(&paths.product_dir);
+        let audit = AuditLog::new(&paths.product_dir);
         Self {
             paths,
             db: OnceLock::new(),
             state: OnceLock::new(),
             seq: AtomicU64::new(0),
+            config,
+            audit,
+            client: Mutex::new("unknown".into()),
         }
     }
 
     pub fn paths(&self) -> &AppPaths {
         &self.paths
+    }
+
+    pub fn config(&self) -> &ConfigStore {
+        &self.config
+    }
+
+    pub fn audit(&self) -> &AuditLog {
+        &self.audit
+    }
+
+    pub fn set_client(&self, name: impl Into<String>) {
+        if let Ok(mut guard) = self.client.lock() {
+            *guard = name.into();
+        }
+    }
+
+    pub fn client(&self) -> String {
+        self.client
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| "unknown".into())
     }
 
     /// 只读工具用这个：开库（必要时建库、跑迁移），不解密任何东西。

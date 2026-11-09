@@ -202,6 +202,10 @@ pub fn run() {
             commands::update::update_open_page,
             commands::settings::settings_get,
             commands::settings::settings_update,
+            commands::mcp::mcp_config_get,
+            commands::mcp::mcp_config_set,
+            commands::mcp::mcp_audit_recent,
+            commands::mcp::mcp_allow_command,
         ])
         .run(tauri::generate_context!())
         .expect("TermHarbor 启动失败");

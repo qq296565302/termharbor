@@ -4,6 +4,7 @@ import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
 import type { BackupDto, Settings, TerminalTheme } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
+import McpSettings from "./McpSettings";
 
 /** 主题色板。终端背景色同时用于 `.term-body`，否则切浅色后四周还是黑的。 */
 export const TERM_THEMES: Record<
@@ -311,6 +312,8 @@ export default function SettingsPage() {
           <div style={{ color: palette.cursor }}>root@server:~# █</div>
         </div>
       </section>
+
+      <McpSettings />
     </div>
   );
 }

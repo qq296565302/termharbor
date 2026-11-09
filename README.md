@@ -588,10 +588,28 @@ python scripts/make-ico.py --check   # 打印每个条目是 PNG 还是 DIB
 > 有些宿主不展开 `%LOCALAPPDATA%`，写全路径即可。排障时也可以用独立的
 > `termharbor-mcp.exe`（`cargo build --bin termharbor-mcp`），它和 `--mcp` 跑的是同一份循环。
 
-**当前进度**：三个只读工具都通了。`list_connections` 读本地配置库（不解密任何凭据）；
-`sftp_list` 与 `load_snapshot` 各开一条临时连接、做完即断，复用 GUI 的 `prepare_probe`
+**当前进度**：四个工具（三个只读 + `exec`）。`list_connections` 读本地配置库（不解密凭据）；
+`sftp_list`、`load_snapshot`、`exec` 各开一条临时连接、做完即断，复用 GUI 的 `prepare_probe`
 与 `monitor::load`，所以凭据解密、主机指纹校验、负载算法都是同一套。
-密钥**用到才取**：只列连接不会去碰系统凭据管理器。可以这样自测：
+密钥**用到才取**：只列连接不会去碰系统凭据管理器。
+
+> **升级后先做一步**：白名单默认全关。打开应用 → 设置 → MCP 接入，点
+> 「一键开放只读」，或逐台勾选。不勾的话智能体看不到任何服务器（这是刻意的）。
+
+### 白名单与执行档
+
+权限全部由**本地配置**决定，不经过智能体的自述。设置页「MCP 接入」是主界面，
+改动自动写回 `%APPDATA%\TermHarbor\mcp.json` 并**热加载**（不用重启宿主）；
+高级用户也可以直接编辑这个 JSON。
+
+每次调用依次过四道闸门：连接是否启用 → 工具是否允许 → 参数（路径前缀 / 命令白名单）
+→ 执行限额。任一不通过就拒绝，并往 `%APPDATA%\TermHarbor\audit.jsonl` 追加一条
+（成功和拒绝都记）。设置页会把最近被拒的请求列出来，点「允许这条」即写回白名单。
+
+`exec` 的规则：命令按**分词后的 token 序列前缀**匹配白名单（默认空 = 一条都不许执行），
+`; && | 重定向 命令替换` 等复合写法一律拒，超时与输出上限在配置里可调并有硬上限。
+
+可以这样自测：
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' \

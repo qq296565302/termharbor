@@ -8,6 +8,7 @@ pub mod config_io;
 pub mod connections;
 pub mod dev;
 pub mod diag;
+pub mod mcp;
 pub mod settings;
 pub mod sftp;
 pub mod snippets;

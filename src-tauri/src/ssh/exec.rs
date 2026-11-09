@@ -22,6 +22,16 @@ const MAX_OUTPUT: usize = 256 * 1024;
 
 /// 在连接上执行一条命令，返回合并后的 stdout + stderr。
 pub(crate) async fn exec_once(conn: &Handle<ProbeHandler>, command: &str) -> AppResult<String> {
+    exec_once_limited(conn, command, EXEC_TIMEOUT, MAX_OUTPUT).await
+}
+
+/// 同上，但超时和输出上限由调用方给。MCP 的 exec 档用它把限额交给 `mcp.json`。
+pub(crate) async fn exec_once_limited(
+    conn: &Handle<ProbeHandler>,
+    command: &str,
+    timeout: Duration,
+    max_output: usize,
+) -> AppResult<String> {
     let mut channel = conn
         .channel_open_session()
         .await
@@ -35,14 +45,14 @@ pub(crate) async fn exec_once(conn: &Handle<ProbeHandler>, command: &str) -> App
         ));
     }
 
-    let collected = tokio::time::timeout(EXEC_TIMEOUT, async {
+    let collected = tokio::time::timeout(timeout, async {
         let mut buffer: Vec<u8> = Vec::new();
         let mut truncated = false;
 
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => {
-                    if buffer.len() + data.len() > MAX_OUTPUT {
+                    if buffer.len() + data.len() > max_output {
                         truncated = true;
                         break;
                     }
@@ -50,7 +60,7 @@ pub(crate) async fn exec_once(conn: &Handle<ProbeHandler>, command: &str) -> App
                 }
                 // stderr 也要收：「command not found」「Permission denied」都在这里
                 Some(ChannelMsg::ExtendedData { data, .. })
-                    if buffer.len() + data.len() <= MAX_OUTPUT =>
+                    if buffer.len() + data.len() <= max_output =>
                 {
                     buffer.extend_from_slice(&data);
                 }
@@ -68,7 +78,7 @@ pub(crate) async fn exec_once(conn: &Handle<ProbeHandler>, command: &str) -> App
     let (buffer, truncated) = collected.map_err(|_| {
         AppError::with_detail(
             ErrCode::SshTcpTimeout,
-            format!("命令执行超时（>{EXEC_TIMEOUT:?}）: {command}"),
+            format!("命令执行超时（>{timeout:?}）: {command}"),
         )
     })?;
 
@@ -87,11 +97,21 @@ pub(crate) async fn exec_on_fresh_connection(
     request: ProbeRequest,
     command: &str,
 ) -> AppResult<String> {
+    exec_on_fresh_connection_limited(request, command, EXEC_TIMEOUT, MAX_OUTPUT).await
+}
+
+/// 同上，限额由 MCP 白名单配置给。
+pub(crate) async fn exec_on_fresh_connection_limited(
+    request: ProbeRequest,
+    command: &str,
+    timeout: Duration,
+    max_output: usize,
+) -> AppResult<String> {
     let established = establish(&request, Purpose::Session)
         .await
         .map_err(probe_failure_to_error)?;
 
-    let result = exec_once(&established.handle, command).await;
+    let result = exec_once_limited(&established.handle, command, timeout, max_output).await;
     let _ = established
         .handle
         .disconnect(Disconnect::ByApplication, "", "en")

@@ -16,14 +16,18 @@ use super::tools;
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// 给模型看的开场白。写得越具体，模型越少乱调工具。
-const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接访问服务器，**只做只读操作**。\
-先调用 list_connections 拿到连接名，再用 sftp_list / load_snapshot 查询。\
+const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接访问服务器。\
+**能不能用取决于管理员在本地白名单里开了什么**：没开的连接看不到，\
+没开的工具/目录/命令会被明确拒绝。\
+先调用 list_connections 看有哪些连接可用，再按需使用 sftp_list / load_snapshot / exec。\
 不会也不能返回密码、私钥或主机指纹。\
 \
 纪律（很重要）：\
 1. 只用本服务的工具查询。不要启动图形界面、不要自己扫描端口、不要让用户去界面里手动点按钮。\
 2. list_connections 只是「已保存的连接」，不表示在线，也不表示能登录成功；不要据此断言在线状态。\
-3. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。";
+3. 被白名单拒绝时，把拒绝原因原样转告用户，让管理员去「设置 → MCP 接入」开启；\
+   不要改用别的工具、别的路径或拼接命令绕过。\
+4. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。";
 
 pub struct Server {
     ctx: Context,
@@ -77,6 +81,14 @@ impl Server {
             .and_then(|value| value.get("protocolVersion"))
             .and_then(Value::as_str)
             .unwrap_or(SUPPORTED_VERSIONS[0]);
+
+        // 宿主自报的身份，只写进审计日志做追溯。
+        // **不参与任何放行判断** —— agent 想报什么就能报什么，还容易被注入。
+        if let Some(client) = params.and_then(|value| value.get("clientInfo")) {
+            let name = client.get("name").and_then(Value::as_str).unwrap_or("?");
+            let version = client.get("version").and_then(Value::as_str).unwrap_or("?");
+            self.ctx.set_client(format!("{name}/{version}"));
+        }
 
         // 认识就顺着宿主，不认识就用我们最新的：宿主会据此判断要不要继续。
         let version = if SUPPORTED_VERSIONS.contains(&requested) {
@@ -148,8 +160,8 @@ mod tests {
             value["result"]["instructions"]
                 .as_str()
                 .unwrap()
-                .contains("只读"),
-            "开场白里要明确只读，减少模型乱调"
+                .contains("白名单"),
+            "开场白里要说清权限来自本地白名单"
         );
     }
 
@@ -190,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_three_tools() {
+    async fn tools_list_returns_four_tools() {
         let value = call(
             &server(),
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#,
@@ -199,9 +211,114 @@ mod tests {
         let tools = value["result"]["tools"]
             .as_array()
             .expect("要有 tools 数组");
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 4);
         assert_eq!(tools[0]["name"], "list_connections");
         assert!(tools[0]["inputSchema"]["type"] == "object");
+    }
+
+    /// 造一台"数据库里有、但白名单没开"的机器。
+    async fn seeded_server() -> (Server, std::path::PathBuf) {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("th-mcp-seeded-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let ctx = Context::for_tests(dir.clone());
+        let record = crate::storage::connections::ConnectionRecord {
+            id: "conn-1".into(),
+            name: "内网测试机".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            username: "root".into(),
+            auth_type: crate::storage::connections::AuthType::Password,
+            secret_blob: None,
+            key_path: None,
+            key_pass_blob: None,
+            legacy_algorithms: false,
+            last_used_at: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        ctx.db()
+            .unwrap()
+            .call(move |conn| crate::storage::connections::insert(conn, &record))
+            .await
+            .unwrap();
+        (Server::new(ctx), dir)
+    }
+
+    /// 默认全关：数据库里有机器，agent 一台都看不到，也调不动任何工具。
+    #[tokio::test]
+    async fn fail_closed_hides_connections_and_denies_tools() {
+        let (server, dir) = seeded_server().await;
+
+        let list = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}"#,
+        )
+        .await;
+        assert_eq!(
+            list["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .trim(),
+            "[]"
+        );
+
+        let denied = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"sftp_list","arguments":{"connection":"内网测试机","path":"/var/log"}}}"#,
+        )
+        .await;
+        // 未开放的连接要表现得像"不存在"，避免 agent 枚举库里的机器
+        assert_eq!(denied["error"]["code"], crate::mcp::jsonrpc::INVALID_PARAMS);
+
+        // 但审计里如实记录了真实原因
+
+        let audit = std::fs::read_to_string(dir.join("audit.jsonl")).unwrap();
+        assert!(
+            audit.contains("connection_disabled"),
+            "审计没记拒绝原因：{audit}"
+        );
+    }
+
+    /// 打开白名单后连接可见；但没配置过的路径仍然被拦在闸门层（不会真去连 SSH）。
+    #[tokio::test]
+    async fn enabling_a_connection_makes_it_visible_but_paths_stay_gated() {
+        let (server, _dir) = seeded_server().await;
+        let mut cfg = crate::mcp::config::McpConfig::default();
+        cfg.connections.insert(
+            "内网测试机".into(),
+            crate::mcp::config::ConnectionPolicy {
+                enabled: true,
+                tools: vec!["sftp_list".into()],
+                paths: vec!["/var/log".into()],
+                ..Default::default()
+            },
+        );
+        server.ctx.config().save(&cfg).unwrap();
+
+        let list = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}"#,
+        )
+        .await;
+        assert!(list["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("内网测试机"));
+
+        let denied = call(
+            &server,
+            r#"{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"sftp_list","arguments":{"connection":"内网测试机","path":"/etc"}}}"#,
+        )
+        .await;
+        assert_eq!(denied["result"]["isError"], true);
+        assert!(denied["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("path_not_allowed"));
     }
 
     /// `list_connections` 是唯一一个不碰 SSH 的实现，端到端跑一遍：
