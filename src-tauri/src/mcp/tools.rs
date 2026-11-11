@@ -185,13 +185,18 @@ pub fn list() -> Vec<ToolInfo> {
         ToolInfo {
             name: TOOL_EXEC,
             description: "在服务器上执行一条命令。默认允许任意单条命令；\
-                          复合命令（;、管道、重定向、$() 等）一律拒绝，需要多步就分多次调用。\
+                          复合命令（引号外的 ; 管道 重定向 $() 反引号）一律拒绝，\
+                          需要多步就分多次调用。参数里的特殊字符用引号包住即可，\
+                          例如 curl 'http://h/?a=1&b=2' 是合法的单条命令。\
                           如果用户配了命令白名单，则只能执行白名单里的命令。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "connection": { "type": "string", "description": "连接名称或 id" },
-                    "command": { "type": "string", "description": "单条命令，例如 df -h" }
+                    "command": {
+                        "type": "string",
+                        "description": "单条命令，例如 df -h。不要用分号或管道拼接多条命令"
+                    }
                 },
                 "required": ["connection", "command"],
                 "additionalProperties": false
@@ -209,6 +214,9 @@ enum Outcome {
     Denied {
         connection: String,
         reason: DenyReason,
+        /// 拒绝原因的具体说明（为什么这条命令不算单条、命中哪个符号）。
+        /// 有它才能让模型自己改对，而不是去翻一个不存在的开关。
+        hint: Option<String>,
     },
     Error {
         connection: String,
@@ -327,6 +335,39 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
              本地策略默认不通过 MCP 读写。这是刻意的保护，不是权限没开。\
              如果确实需要，请让用户在「设置 → MCP 接入」里展开这台机器，\
              勾选「允许访问凭据类文件」；在此之前请换别的办法，不要重复尝试同一个路径。",
+        )),
+        // 这条必须单独说清楚：0.1.29 之前它和权限拒绝共用一句文案，
+        // 于是用户以为要「放开权限」，去设置页翻了一圈 —— 那里根本没有这个开关。
+        Outcome::Denied {
+            reason: DenyReason::CompoundCommand,
+            hint,
+            ..
+        } => {
+            let why = hint.map(|h| format!("：{h}")).unwrap_or_default();
+            Ok(failed(format!(
+                "这条命令没有通过「一次只执行一条」的检查{why}。\n\
+                 这是**命令写法问题，不是权限没开** —— 设置里没有对应开关，不用让用户去改配置。\n\
+                 改法：① 多步操作拆成多次调用；② 参数里的 & 用单引号包住整段 \
+                 （如 'http://h/?a=1&b=2'）；③ 不要用 > 重定向，让输出直接返回；\
+                 ④ 取 HTTP 状态码用 curl -I，不要用 -w '%{{http_code}}'。"
+            )))
+        }
+        Outcome::Denied {
+            reason: DenyReason::CommandNotAllowed,
+            ..
+        } => Ok(failed(
+            "这条命令不在该机器允许的命令清单里（command_not_allowed）。\
+             请让用户到「设置 → MCP 接入 → 这台机器的细化权限 → 限制可执行命令」\
+             里加一行以它开头的命令，或者把整个清单清空（清空 = 允许任意单条命令）。\
+             在用户操作之前不要反复重试，也不要换个写法试探。",
+        )),
+        Outcome::Denied {
+            reason: DenyReason::PathNotAllowed,
+            ..
+        } => Ok(failed(
+            "这个路径不在该机器允许的目录范围内（path_not_allowed）。\
+             请让用户在「设置 → MCP 接入 → 这台机器的细化权限 → 可见目录」\
+             里加上它的目录前缀，或者把列表清空（清空 = 不限路径）。",
         )),
         Outcome::Denied { reason, .. } => Ok(failed(format!(
             "已被本地配置拒绝（{}）。这台机器或这个工具没有对 MCP 开放。\
@@ -949,7 +990,18 @@ async fn exec_command(ctx: &Context, arguments: Option<&Value>) -> Result<Outcom
 
     // 复合字符检查在白名单匹配之前，顺序不能反
     if let Err(reason) = validate_command(&command, &policy.exec.allow) {
-        return Ok(denied(&record, reason));
+        // 只有这类拒绝需要解释「卡在哪个符号」，好让模型自己改对。
+        let hint = match reason {
+            DenyReason::CompoundCommand => {
+                crate::mcp::exec::scan_offense(&command).map(super::exec::Offense::hint)
+            }
+            _ => None,
+        };
+        return Ok(Outcome::Denied {
+            connection: record.name.clone(),
+            reason,
+            hint,
+        });
     }
 
     match run_exec(ctx, &record.id, &command, &policy.exec).await {
@@ -987,6 +1039,7 @@ fn denied(record: &ConnectionRecord, reason: DenyReason) -> Outcome {
     Outcome::Denied {
         connection: record.name.clone(),
         reason,
+        hint: None,
     }
 }
 

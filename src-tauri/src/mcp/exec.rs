@@ -6,6 +6,103 @@
 
 use serde::Serialize;
 
+/// 一条命令为什么不算「单条」。
+///
+/// 只用于**解释**，不参与放行判断 —— 但很重要：0.1.29 之前所有拒绝都回
+/// 「去设置里放开」，而设置里根本没有这个开关，用户只能白翻一圈。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offense {
+    /// 引号外的分隔符 / 重定向 / 子 shell
+    Separator(char),
+    /// `$(...)` 或反引号：命令替换，会把另一条命令的输出拼进来
+    Substitution,
+    /// 引号没配对，后面整段都会被 shell 重新解释
+    UnclosedQuote(char),
+}
+
+impl Offense {
+    /// 给调用方看的一句话，直接拼进拒绝文案里。
+    pub fn hint(self) -> String {
+        match self {
+            Offense::Separator(ch) => {
+                format!("引号外的 `{ch}` 会把一条命令拆成多条（或重定向输出）")
+            }
+            Offense::Substitution => {
+                "命令替换（`$(...)` 或反引号）会把另一条命令的输出拼进来".to_string()
+            }
+            Offense::UnclosedQuote(quote) => {
+                format!("`{quote}` 引号没有配对，后面的内容会被 shell 当成命令")
+            }
+        }
+    }
+}
+
+/// 扫出第一个让命令「不止一件事」的位置。
+///
+/// **按 shell 的引号语义判定**，不是无脑字符扫描。这一点是 0.1.30 修的：
+/// 旧实现见 `{` `}` `&` 就拒，于是
+/// `curl -w '%{http_code}'`、`curl 'http://h/?a=1&b=2'`、`grep -E 'a|b'`、
+/// `awk '{print $1}'` 全被当成复合命令 —— 它们明明是单条命令，只是参数里带符号。
+/// 误伤一次用户就把这个功能当麻烦，比漏挡更伤。
+///
+/// 现在的规则与 shell 一致：
+/// - 单引号内**全部**是字面量，逐字跳过；
+/// - 双引号内 `; & | > <` 是字面量，但 `$(` 和反引号**仍然会执行**，继续拦；
+/// - 引号外 `\` 转义下一个字符（`\;` 是字面分号），换行则被转义成续行；
+/// - 引号没闭合直接拒 —— 后面内容怎么解释完全不受控，不能赌。
+pub fn scan_offense(command: &str) -> Option<Offense> {
+    let mut chars = command.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => {
+                // 单引号里没有转义，遇到下一个 ' 就结束
+                let mut closed = false;
+                for inner in chars.by_ref() {
+                    if inner == '\'' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return Some(Offense::UnclosedQuote('\''));
+                }
+            }
+            '"' => {
+                let mut closed = false;
+                while let Some(inner) = chars.next() {
+                    match inner {
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        // 双引号内 \ 仍然生效（只对 $ ` " \ 换行 有意义，简化处理）
+                        '\\' => {
+                            chars.next();
+                        }
+                        '`' => return Some(Offense::Substitution),
+                        '$' if chars.peek() == Some(&'(') => return Some(Offense::Substitution),
+                        _ => {}
+                    }
+                }
+                if !closed {
+                    return Some(Offense::UnclosedQuote('"'));
+                }
+            }
+            // 引号外转义：下一个字符变字面量（含换行，即续行）
+            '\\' => {
+                chars.next();
+            }
+            '`' => return Some(Offense::Substitution),
+            '$' if chars.peek() == Some(&'(') => return Some(Offense::Substitution),
+            '\n' | '\r' | '\0' | ';' | '|' | '&' | '>' | '<' | '(' | ')' => {
+                return Some(Offense::Separator(ch))
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// 拒绝原因。会原样写进审计日志，也会给 agent 看，所以用短英语常量。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,7 +148,7 @@ pub fn validate_command(command: &str, allow: &[String]) -> Result<(), DenyReaso
         return Err(DenyReason::EmptyCommand);
     }
 
-    if has_shell_metachar(trimmed) {
+    if scan_offense(trimmed).is_some() {
         return Err(DenyReason::CompoundCommand);
     }
 
@@ -75,32 +172,6 @@ pub fn validate_command(command: &str, allow: &[String]) -> Result<(), DenyReaso
     } else {
         Err(DenyReason::CommandNotAllowed)
     }
-}
-
-/// shell 元字符一律拒。
-///
-/// 这里宁可误伤：白名单本来就是给人显式配的只读命令，用不到重定向、管道、
-/// 命令替换、后台执行。漏一个就等于给了半个 shell。
-fn has_shell_metachar(command: &str) -> bool {
-    command.chars().any(|ch| {
-        matches!(
-            ch,
-            ';' | '|'
-                | '&'
-                | '`'
-                | '>'
-                | '<'
-                | '$'
-                | '('
-                | ')'
-                | '{'
-                | '}'
-                | '\\'
-                | '\n'
-                | '\r'
-                | '\0'
-        )
-    })
 }
 
 #[cfg(test)]
@@ -201,5 +272,97 @@ mod tests {
             validate_command("systemctl restart nginx", &allow),
             Err(DenyReason::CommandNotAllowed)
         );
+    }
+
+    /// 0.1.30 之前这批全被当成复合命令 —— 它们都是**单条**命令，
+    /// 只是参数里带符号。误伤一次用户就把功能当麻烦，所以逐条钉住。
+    #[test]
+    fn quoted_arguments_are_data_not_separators() {
+        for cmd in [
+            // 取 HTTP 状态码的标准写法
+            "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:80/",
+            // URL 查询串里的 &
+            "curl 'http://127.0.0.1:80/?a=1&b=2'",
+            "curl \"http://127.0.0.1:80/?a=1&b=2\"",
+            // 正则里的 |
+            "grep -E 'error|fatal' /var/log/app.log",
+            // awk 里的 $1
+            "awk '{print $1}' /var/log/app.log",
+            // find -exec 结尾的 \;
+            "find /var/log -name '*.log' -exec ls -l {} \\;",
+            // 单引号里塞一段 JSON 请求体
+            "curl -X POST -d '{\"a\":1}' http://127.0.0.1:80/api",
+        ] {
+            assert_eq!(validate_command(cmd, &[]), Ok(()), "不该拦：{cmd}");
+        }
+    }
+
+    /// 但引号**不能**变成绕过口子：双引号内 `$(...)` 和反引号照样会执行。
+    #[test]
+    fn substitution_still_blocked_inside_double_quotes() {
+        for cmd in [
+            "curl \"http://h/$(id)\"",
+            "curl \"http://h/`id`\"",
+            "echo \"a\"; rm -rf /tmp/x",
+        ] {
+            assert_eq!(
+                validate_command(cmd, &[]),
+                Err(DenyReason::CompoundCommand),
+                "该拦住：{cmd}"
+            );
+        }
+    }
+
+    /// 引号没闭合不能赌：后面内容怎么被解释完全不受控。
+    #[test]
+    fn unclosed_quote_is_rejected() {
+        for cmd in [
+            "curl 'http://h/",
+            "curl \"http://h/",
+            "grep 'a|b /var/log/x",
+        ] {
+            assert_eq!(
+                validate_command(cmd, &[]),
+                Err(DenyReason::CompoundCommand),
+                "该拦住：{cmd}"
+            );
+        }
+    }
+
+    /// 引号外的符号仍然一律拒，这是契约本体。
+    #[test]
+    fn separators_outside_quotes_still_rejected() {
+        for cmd in [
+            "curl http://h/; id",
+            "curl http://h/ && id",
+            "curl http://h/ | sh",
+            "curl -o /tmp/x http://h/ > /dev/null",
+            "curl http://h/?a=1&b=2",
+        ] {
+            assert_eq!(
+                validate_command(cmd, &[]),
+                Err(DenyReason::CompoundCommand),
+                "该拦住：{cmd}"
+            );
+        }
+    }
+
+    /// 拒绝原因要能指向具体符号，否则用户只能去翻一个不存在的开关。
+    #[test]
+    fn offense_points_at_the_actual_character() {
+        assert_eq!(
+            scan_offense("curl http://h/?a=1&b=2"),
+            Some(Offense::Separator('&'))
+        );
+        assert_eq!(
+            scan_offense("df -h; rm -rf /"),
+            Some(Offense::Separator(';'))
+        );
+        assert_eq!(scan_offense("echo $(id)"), Some(Offense::Substitution));
+        assert_eq!(
+            scan_offense("curl 'http://h/"),
+            Some(Offense::UnclosedQuote('\''))
+        );
+        assert_eq!(scan_offense("curl -w '%{http_code}' http://h/"), None);
     }
 }

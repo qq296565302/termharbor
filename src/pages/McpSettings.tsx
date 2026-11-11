@@ -372,7 +372,7 @@ export default function McpSettings() {
                               限制可执行命令
                               <em className="mcp__hint">
                                 {policy.exec.allow.length === 0
-                                  ? "留空 = 任意单条命令（复合命令始终拒绝）"
+                                  ? "留空 = 任意单条命令；引号外的 ; | & > 等仍会被拒（用引号包住参数即可）"
                                   : "只允许这些命令前缀"}
                               </em>
                             </span>
