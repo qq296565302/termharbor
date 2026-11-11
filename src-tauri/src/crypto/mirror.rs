@@ -164,7 +164,11 @@ fn unprotect(blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
 #[cfg(not(windows))]
 fn write_private(path: &Path, data: &[u8]) -> Result<(), CryptoError> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    // 两个扩展 trait 都要导入：OpenOptionsExt 给 .mode()，PermissionsExt 给
+    // Permissions::from_mode()。少导后面那个在 Linux/macOS 上是**编译错误**，
+    // 而 Windows 走上面的 cfg(windows) 分支，本地怎么跑都发现不了 —— CI 红在
+    // Clippy 步骤就是这个原因（编译不过，所以后面的单测根本没跑）。
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
