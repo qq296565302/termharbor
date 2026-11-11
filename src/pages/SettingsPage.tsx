@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
@@ -34,6 +34,12 @@ const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 24;
 const SCROLLBACK_MIN = 1000;
 const SCROLLBACK_MAX = 50000;
+
+/** 滑块的已选段填充：轨道用 CSS 渐变画，位置由这个百分比决定 */
+function pctStyle(value: number, min: number, max: number): CSSProperties {
+  const ratio = ((value - min) / (max - min)) * 100;
+  return { "--pct": `${Math.min(100, Math.max(0, ratio))}%` } as CSSProperties;
+}
 const COMMIT_DELAY = 400;
 
 /** 快照时间：本地时间到分钟就够了，秒没有信息量。 */
@@ -143,9 +149,8 @@ export default function SettingsPage() {
   return (
     <div className="settings-page">
       <header className="settings__head">
-        <h2>设置</h2>
-        <span className="settings__status">
-          {saving ? "保存中…" : "已保存"}
+        <span className={`settings__status${saving ? " is-saving" : ""}`}>
+          {saving ? "保存中…" : "所有改动自动保存"}
         </span>
       </header>
 
@@ -163,6 +168,7 @@ export default function SettingsPage() {
           max={FONT_SIZE_MAX}
           step={1}
           value={settings.fontSize}
+          style={pctStyle(settings.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX)}
           onChange={(event) => change({ fontSize: Number(event.target.value) })}
         />
         <p className="settings__hint">
@@ -212,6 +218,7 @@ export default function SettingsPage() {
           max={SCROLLBACK_MAX}
           step={1000}
           value={settings.scrollback}
+          style={pctStyle(settings.scrollback, SCROLLBACK_MIN, SCROLLBACK_MAX)}
           onChange={(event) => change({ scrollback: Number(event.target.value) })}
         />
         <p className="settings__hint">

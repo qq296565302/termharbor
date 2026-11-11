@@ -344,28 +344,41 @@ export default function ConnectionsPage() {
             onChange={(event) => setQuery(event.target.value)}
           />
           <button type="button" className="btn btn--primary" onClick={openNew}>
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3.4v9.2M3.4 8h9.2" />
+            </svg>
             新建
           </button>
         </div>
 
-        {/* 导入导出放在搜索框下面一行：主按钮位只留给「新建」 */}
+        {/* 导入导出降级成 ghost 小按钮：主按钮位只留给「新建」 */}
         <div className="conn-list__io">
           <button
             type="button"
-            className="btn btn--sm"
+            className="btn btn--ghost btn--sm"
             disabled={ioBusy}
             title="导出全部连接（不含密码）"
             onClick={() => void exportConnections()}
           >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 10.2V2.8" />
+              <path d="m5.4 5.4 2.6-2.6 2.6 2.6" />
+              <path d="M3.2 10.4v1.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4v-1.6" />
+            </svg>
             导出
           </button>
           <button
             type="button"
-            className="btn btn--sm"
+            className="btn btn--ghost btn--sm"
             disabled={ioBusy}
             title="从文件导入连接（已存在的跳过）"
             onClick={() => void importConnections()}
           >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 2.8v7.4" />
+              <path d="m5.4 7.6 2.6 2.6 2.6-2.6" />
+              <path d="M3.2 10.4v1.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4v-1.6" />
+            </svg>
             导入
           </button>
         </div>

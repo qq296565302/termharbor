@@ -1,47 +1,109 @@
 :root {
-  /* 浅色 + 赛博朋克点缀：冷白底 + 青绿主色 + 洋红告警。
-     上一版做成深色，用户反馈「太黑了」——生产工具长时间盯着看，浅底更省眼。
-     霓虹感靠强调色和细光线保留，不靠把整块背景压黑。 */
-  --bg: #f5f8fb;
-  --bg-muted: #e9eff6;
-  --bg-sunken: #edf2f8;
-  --border: rgba(13, 148, 136, 0.16);
-  --border-strong: rgba(13, 148, 136, 0.34);
-  --text: #0d1b2a;
-  --text-muted: #47607a;
-  --text-faint: #7b8ca1;
+  /* ---------- 中性灰阶 ----------
+     上一版的三个底色（#f5f8fb / #e9eff6 / #edf2f8）只差 3~5%，而卡片和页面
+     用的是同一组变量 —— 结果整页糊成一片，只能靠 1px 边框分辨层次。
+     现在把「页面底 / 面板 / 次级 / 凹陷」拆成四级，卡片是纯白，与底拉开。
+     边框去掉青绿色偏（原来 rgba(13,148,136,.16)，大面积看发脏）。 */
+  --bg-app: #f6f7f9;
+  --bg-panel: #ffffff;
+  --bg-subtle: #f9fafb;
+  --bg-sunken: #f2f4f7;
+  --bg-sidebar: #fcfcfd;
+
+  --border: #e7e9ee;
+  --border-strong: #d5d9e0;
+
+  --text: #171a20;
+  --text-muted: #5a6472;
+  --text-faint: #8d96a5;
+
+  /* ---------- 品牌色 ----------
+     青绿保留，但只给主操作与选中态。语义色换成不打架的一组：
+     原来的洋红告警和青绿撞色，看着像是两个产品拼起来的。 */
   --accent: #0d9488;
-  --accent-soft: rgba(13, 148, 136, 0.1);
-  --ok: #0d9f6e;
-  --warn: #b45309;
-  --danger: #d81b60;
-  --danger-soft: rgba(216, 27, 96, 0.1);
-  /* 发光强度集中在这里，整体调亮/调暗只改这一处 */
-  --glow: 0 0 12px -2px rgba(13, 148, 136, 0.35);
-  --radius: 8px;
+  --accent-hover: #0b7f75;
+  --accent-soft: #e6f5f3;
+  --accent-line: #99dbd2;
+  /* 主色底上的前景色（暗色主题下会翻成深色） */
+  --on-accent: #ffffff;
+
+  --ok: #12805c;
+  --warn: #b54708;
+  --danger: #c4321b;
+  --danger-soft: #fdecea;
+
+  /* ---------- 阴影 ----------
+     中性黑，不用彩色投影。层级靠「底色差 + 边框 + 极轻阴影」三件套，
+     不靠加粗边框喊话。 */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 6px 16px -4px rgba(16, 24, 40, 0.1), 0 2px 6px -2px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 16px 40px -8px rgba(16, 24, 40, 0.16);
+
+  /* ---------- 尺度 ----------
+     之前圆角散着 4/5/6/7/8 五种、字号 10.5~14 七种、按钮 padding 三套写法。
+     现在只从这里取。 */
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --radius: var(--r-lg);
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+
+  --h-sm: 24px;
+  --h-md: 28px;
+  --h-lg: 34px;
+
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     system-ui, sans-serif;
+
+  /* ---------- 旧名兼容 ----------
+     文件后面还有 300+ 处引用旧变量。一次性改名风险太大，先做别名过渡，
+     每改完一页删一批，改完为止。新代码一律用上面那组。 */
+  --bg: var(--bg-panel);
+  --bg-muted: var(--bg-subtle);
 
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1c1f;
-    --bg-muted: #232327;
-    --bg-sunken: #191a1c;
-    --border: #32323a;
-    --border-strong: #43434d;
-    --text: #ececef;
-    --text-muted: #a0a0aa;
-    --text-faint: #75757f;
-    --accent: #85b7eb;
-    --accent-soft: #14293d;
-    --ok: #5dcaa5;
-    --warn: #ef9f27;
-    --danger: #f09595;
-    --danger-soft: #2c1a1a;
+    --bg-app: #0f1115;
+    --bg-panel: #16191f;
+    --bg-subtle: #1c2027;
+    --bg-sunken: #0b0d11;
+    --bg-sidebar: #121519;
+
+    --border: #262b33;
+    --border-strong: #343a45;
+
+    --text: #e8ebf0;
+    --text-muted: #9aa4b2;
+    --text-faint: #6b7480;
+
+    /* 暗底上 #0d9488 对比度不够，提亮一档；对应的前景色也要跟着翻 */
+    --accent: #2dd4bf;
+    --accent-hover: #5eead4;
+    --accent-soft: rgba(45, 212, 191, 0.12);
+    --accent-line: rgba(45, 212, 191, 0.4);
+    --on-accent: #06231f;
+
+    --ok: #3ddc97;
+    --warn: #f5a524;
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.12);
+
+    /* 暗色里投影几乎看不见，层级交给边框 */
+    --shadow-xs: none;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 6px 16px -4px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.6);
 
     color-scheme: dark;
   }
@@ -60,18 +122,36 @@ body,
 
 body {
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 1.55;
+  /* 13px 基准：工具类应用一屏要放的信息多，14px 会显得松散 */
+  font-size: var(--fs-base);
+  line-height: 1.5;
   color: var(--text);
-  background: var(--bg);
+  background: var(--bg-app);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow: hidden;
+}
+
+::selection {
+  background: var(--accent-line);
+  color: var(--text);
 }
 
 button {
   font-family: inherit;
   font-size: inherit;
   cursor: pointer;
+}
+
+/* 键盘操作必须看得见焦点；鼠标点击不闪 —— 所以只给 :focus-visible */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* ------------------------------------------------------------ 布局骨架 */
@@ -84,9 +164,9 @@ button {
 .sidebar {
   display: flex;
   flex-direction: column;
-  width: 212px;
-  flex: 0 0 212px;
-  background: var(--bg-muted);
+  width: 216px;
+  flex: 0 0 216px;
+  background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
   user-select: none;
 }
@@ -125,42 +205,60 @@ button {
 .nav {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 4px 10px 10px;
 }
 
 /*
- * 导航项：平铺一行，不做渐变药丸。
+ * 导航项：一行图标 + 文字。
  *
- * 原来这里是「左侧霓虹条 + 向右渐隐的青绿渐变 + 8px 圆角」，三样凑在一起很像
- * 模板站里的卡片按钮。现在只留两件事：选中时给一条 2px 竖线 + 一行极淡底色，
- * 其余靠字重和颜色区分 —— 工具该长这样，不该像落地页。
+ * 只有文字时六项排下来像一份目录，看不出「这是一个可以点的东西」。
+ * 加 16px 线性图标是为了扫码速度，不是为了装饰 —— 所以统一 1.5px 描边、
+ * 统一几何尺寸，不用彩色、不用 emoji。
  */
 .nav__item {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 9px;
   width: 100%;
   height: 32px;
   padding: 0 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-muted);
   text-align: left;
-  font-size: 13px;
+  font-size: var(--fs-base);
   transition: background 120ms ease, color 120ms ease;
 }
 
+.nav__item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+  transition: opacity 120ms ease;
+}
+
 .nav__item:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
   color: var(--text);
 }
 
 .nav__item.is-active {
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  color: var(--text);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 500;
+}
+
+.nav__item.is-active svg {
+  opacity: 1;
 }
 
 /* 竖线贴在行内左侧、上下各留 7px，圆角才不会把它啃掉 */
@@ -215,24 +313,31 @@ button {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 48px;
-  flex: 0 0 48px;
-  padding: 0 20px;
+  gap: 10px;
+  height: 52px;
+  flex: 0 0 52px;
+  padding: 0 18px;
+  background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
 
 .topbar h1 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .topbar__meta {
   margin-left: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-faint);
+  letter-spacing: 0.02em;
 }
 
 /* 只在「本地配置库版本 ≠ 程序需要的版本」时出现，平时不占位置 */
@@ -251,27 +356,27 @@ button {
 .content {
   flex: 1;
   overflow-y: auto;
-  background: var(--bg-sunken);
+  background: var(--bg-app);
 }
 
 .statusbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 26px;
-  flex: 0 0 26px;
-  padding: 0 16px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0 14px;
   border-top: 1px solid var(--border);
-  background: var(--bg-muted);
-  font-size: 11px;
-  color: var(--text-muted);
+  background: var(--bg-panel);
+  font-size: 11.5px;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
 }
 
 .statusbar__sep {
   width: 1px;
   height: 11px;
-  background: var(--border-strong);
+  background: var(--border);
 }
 
 .statusbar__spacer {
@@ -298,10 +403,11 @@ button {
 }
 
 .card {
-  background: var(--bg);
+  background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--r-lg);
   padding: 16px 18px 18px;
+  box-shadow: var(--shadow-xs);
 }
 
 .card__head {
@@ -313,9 +419,9 @@ button {
 
 .card__head h2 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.2px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .card__head .btn {
@@ -374,46 +480,120 @@ button {
 
 /* ------------------------------------------------------------ 控件 */
 
+/*
+ * 按钮。三件以前没有的东西：
+ * 1. 统一高度（28/24），之前 padding 5px 12px、3px 9px、4px 14px 三种写法并存；
+ * 2. flex 居中 + gap，有图标时不用再手调对齐；
+ * 3. ghost / icon 两个变体 —— 工具栏里一排等宽描边按钮最显「朴素」。
+ */
 .btn {
-  padding: 5px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--h-md);
+  padding: 0 11px;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  background: var(--bg);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
   color: var(--text);
   font-size: 12.5px;
-  transition: background 120ms ease, border-color 120ms ease;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--bg-muted);
+  background: var(--bg-subtle);
+  border-color: var(--text-faint);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--bg-sunken);
+  box-shadow: none;
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
+  box-shadow: none;
+}
+
+.btn svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
-}
-
-/* 列表行内的小按钮：设置页的备份列表、恢复确认都用它 */
-.btn--small {
-  padding: 3px 9px;
-  border-radius: 6px;
-  font-size: 11.5px;
+  color: var(--on-accent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.06);
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn--primary:active:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+/* 工具栏、行内操作：没有边框，hover 才显形 */
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.btn--ghost:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  border-color: transparent;
+  color: var(--text);
+}
+
+/* 列表行内的小按钮：设置页的备份列表、恢复确认都用它。
+   注意 .btn--sm 是历史拼写（21 处在用），和 .btn--small 并存 —— 只写了后者
+   时那 21 个按钮一直按默认尺寸渲染，工具栏才显得笨重。两个都认。 */
+.btn--small,
+.btn--sm {
+  height: var(--h-sm);
+  padding: 0 9px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+}
+
+/* 只有图标的方按钮：尺寸恒定，工具栏不会因为文字长短跳动 */
+.btn--icon {
+  width: var(--h-md);
+  padding: 0;
+}
+
+.btn--icon.btn--small {
+  width: var(--h-sm);
+}
+
+.btn--primary:hover:not(:disabled) {
+  filter: none;
 }
 
 .btn--danger {
-  border-color: var(--border-strong);
   color: var(--danger);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
 .alert {
@@ -689,12 +869,21 @@ button {
 
 /* ------------------------------------------------------------ 连接管理（M1） */
 
+/*
+ * 连接页：左侧列表面板 + 右侧详情面板，两栏贴边、用 1px 分隔线。
+ *
+ * 原来是「左边一条、右边一张大卡片，中间 14px 缝」—— 窗口一拉宽，右边那张
+ * 空卡片就变成一个巨大的白框，注意力全落在一个没有内容的地方。
+ * 现在改成常驻双栏：左栏微灰、右栏纯白，选中项在白栏里浮起来。
+ */
 .page--split {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 0;
   max-width: none;
   height: 100%;
+  padding: 0;
+  margin: 0;
 }
 
 @media (max-width: 860px) {
@@ -706,23 +895,34 @@ button {
 .conn-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
-  padding-right: 2px;
+  padding: 14px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-subtle);
   overflow-y: auto;
 }
 
 .conn-list__head {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   position: sticky;
-  top: 0;
-  padding-bottom: 2px;
-  background: var(--bg-sunken);
+  top: -14px;
+  margin: -14px -12px 0;
+  padding: 14px 12px 10px;
+  background: var(--bg-subtle);
+  z-index: 1;
+}
+
+/* 导入导出降级成一行 ghost 小按钮，别再和「新建」抢视觉重量 */
+.conn-list__io {
+  display: flex;
+  gap: 2px;
+  margin: -2px 0 2px;
 }
 
 .conn-list__hint {
-  margin: 12px 2px;
+  margin: 10px 4px;
   font-size: 12.5px;
   color: var(--text-faint);
   line-height: 1.7;
@@ -731,63 +931,96 @@ button {
 .conn-list__items {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .conn-item {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name tags"
+    "addr addr";
+  align-items: center;
+  gap: 1px 8px;
   width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
   text-align: left;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .conn-item:hover {
-  border-color: var(--border-strong);
+  background: var(--bg-panel);
+  border-color: var(--border);
 }
 
 .conn-item.is-active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--bg-panel);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+/* 选中项左侧一道主色指示条，比整块变色克制 */
+.conn-item.is-active {
+  position: relative;
+}
+
+.conn-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
 }
 
 .conn-item__name {
-  font-size: 13px;
+  grid-area: name;
+  font-size: var(--fs-base);
   font-weight: 500;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conn-item__addr {
+  grid-area: addr;
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  word-break: break-all;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conn-item__tags {
+  grid-area: tags;
   display: flex;
-  gap: 5px;
-  margin-top: 2px;
+  gap: 4px;
 }
 
 .pill {
   padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg-muted);
-  color: var(--text-muted);
-  font-size: 10.5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .pill--warn {
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
   color: var(--warn);
 }
 
@@ -795,10 +1028,10 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 16px 18px 18px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
+  padding: 20px 24px 24px;
+  border: 0;
+  border-radius: 0;
+  background: var(--bg-panel);
   overflow-y: auto;
 }
 
@@ -1014,9 +1247,55 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-muted);
+  background: var(--bg-panel);
+}
+
+/* 工具栏按钮：纯幽灵按钮。原来全是虚线框，四个摆一起像一排"占位符" */
+.term-tabs__new {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.term-tabs__new:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.term-tabs__new:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.term-tabs__new.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ghost 按钮的「开」状态：侧栏开关共用 */
+.btn--ghost.is-on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.btn--ghost.is-on:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.btn--ghost.is-on svg {
+  stroke: var(--accent);
 }
 
 /* 标签区自己消化溢出：以前整条工具栏都是滚动容器，标签一多按钮就被卷走，
@@ -1130,32 +1409,6 @@ button {
 }
 
 /* 工具栏按钮：纯幽灵按钮。原来全是虚线框，四个摆一起像一排"占位符" */
-.term-tabs__new {
-  height: 26px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  white-space: nowrap;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.term-tabs__new:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-  color: var(--text);
-}
-
-.term-tabs__new:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.term-tabs__new.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 
 .term-picker {
   max-height: 190px;
@@ -1321,16 +1574,29 @@ button {
 
 .term-hintbar {
   display: flex;
-  gap: 14px;
-  flex: 0 0 22px;
+  gap: 16px;
+  flex: 0 0 26px;
   align-items: center;
   padding: 0 12px;
   border-top: 1px solid var(--border);
-  background: var(--bg-muted);
+  background: var(--bg-panel);
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
   overflow-x: auto;
+}
+
+/* 键位画成键帽：原来一长串纯文字，扫过去分不清哪个是组合键 */
+.term-hintbar kbd {
+  margin-right: 5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
 }
 
 /* ------------------------------------------------------------ SFTP 文件管理（M3） */
@@ -2136,50 +2402,58 @@ button {
 .settings-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   height: 100%;
   min-height: 0;
-  max-width: 640px;
-  padding: 16px 18px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 18px 20px 32px;
   overflow-y: auto;
 }
 
+/* 顶栏已经有「设置」了，这里不再重复一遍标题，只留保存状态 */
 .settings__head {
   display: flex;
   align-items: baseline;
   gap: 10px;
+  min-height: 16px;
 }
 
 .settings__head h2 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--fs-md);
+  font-weight: 600;
 }
 
 .settings__status {
   color: var(--text-faint);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
+}
+
+.settings__status.is-saving {
+  color: var(--accent);
 }
 
 .settings__error {
   margin: 0;
-  padding: 7px 10px;
-  border-radius: 7px;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+  border-radius: var(--r-md);
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
+/* 每个分区一张白卡片 —— 之前全靠 border-bottom 分隔，滚起来像一篇没分节的说明文 */
 .settings__group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.settings__group:last-child {
-  border-bottom: 0;
+  gap: 10px;
+  padding: 15px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
 }
 
 .settings__label {
@@ -2187,26 +2461,69 @@ button {
   align-items: baseline;
   justify-content: space-between;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--fs-base);
+  font-weight: 500;
 }
 
 .settings__value {
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 
+/* 原生滑块：轨道是浏览器画的，绿色只是 accent-color，所以怎么调都像系统控件。
+   自己画一条：4px 圆角轨道 + 已选段填充 + 14px 白心滑块。 */
 .settings__range {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: var(--accent);
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings__range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--pct, 0%),
+    var(--bg-sunken) var(--pct, 0%)
+  );
+}
+
+.settings__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-sm);
+  transition: transform 100ms ease, background 100ms ease;
+}
+
+.settings__range:hover::-webkit-slider-thumb {
+  transform: scale(1.08);
+}
+
+.settings__range:active::-webkit-slider-thumb {
+  background: var(--accent);
+  transform: scale(1.12);
+}
+
+.settings__range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .settings__hint {
   margin: 0;
   color: var(--text-faint);
-  font-size: 11.5px;
-  line-height: 1.6;
+  font-size: var(--fs-sm);
+  line-height: 1.65;
 }
 
 .settings__themes {
@@ -2217,18 +2534,20 @@ button {
 .settings__theme {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 6px 8px;
+  gap: 9px;
+  padding: 6px 13px 6px 7px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
   color: var(--text);
   font-size: 12.5px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .settings__theme.is-active {
   border-color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .settings__swatch {
@@ -2276,30 +2595,40 @@ button {
 .about-page {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 14px;
   height: 100%;
   min-height: 0;
-  max-width: 720px;
-  padding: 18px 20px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 20px 32px;
   overflow-y: auto;
 }
 
+/* 之前整页是裸文字 + 裸表格，摊在白底上没有任何容器，看着像 README 截图 */
 .about__brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
 }
 
 .about__mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 15px;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: var(--r-md);
+  /* 和左上角的 BrandMark 同色，别让同一品牌在一屏里出现两种蓝 */
+  background: #12211f;
+  color: #5eead4;
+  font-family: var(--mono);
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.5px;
 }
@@ -2308,6 +2637,7 @@ button {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .about__tagline {
@@ -2321,19 +2651,27 @@ button {
 .about__version {
   margin-left: auto;
   padding: 3px 9px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   border-radius: 999px;
+  background: var(--bg-subtle);
   color: var(--text-muted);
   font-family: var(--mono);
   font-size: 11.5px;
 }
 
+.about__section {
+  padding: 15px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
+}
+
 .about__section h3 {
-  margin: 0 0 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 600;
 }
 
 .about__table {
@@ -2343,7 +2681,7 @@ button {
 }
 
 .about__table th {
-  padding: 5px 12px 5px 0;
+  padding: 7px 12px 7px 0;
   color: var(--text-muted);
   font-weight: 400;
   text-align: left;
@@ -2352,24 +2690,44 @@ button {
 }
 
 .about__table td {
-  padding: 5px 0;
+  padding: 7px 0;
   color: var(--text);
   vertical-align: top;
 }
 
 .about__table--grid th,
 .about__table--grid td {
-  padding: 5px 12px 5px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 7px 12px;
 }
 
+/* 表头给一层浅底：原来只有一条下边框，第一眼分不清表头和数据行 */
 .about__table--grid thead th {
-  border-bottom: 1px solid var(--border-strong);
-  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.about__table--grid thead th:first-child {
+  border-top-left-radius: var(--r-sm);
+}
+
+.about__table--grid thead th:last-child {
+  border-top-right-radius: var(--r-sm);
+}
+
+.about__table--grid tbody td {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
 }
 
 .about__table--grid tbody tr:last-child td {
   border-bottom: 0;
+}
+
+.about__table--grid tbody tr:hover td {
+  background: color-mix(in srgb, var(--bg-subtle) 70%, transparent);
 }
 
 .about__dep {

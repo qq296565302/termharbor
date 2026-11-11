@@ -814,11 +814,14 @@ export default function TerminalPage() {
         <div className="term-tabs__actions">
           <button
             type="button"
-            className="term-tabs__new"
+            className="btn btn--primary btn--sm"
             title="新建连接（Ctrl+Shift+T）"
             onClick={() => setPickerOpen((open) => !open)}
           >
-            + 新连接
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3.4v9.2M3.4 8h9.2" />
+            </svg>
+            新连接
           </button>
 
           {/* 分组：左边是「新建」，右边是三个侧栏开关，中间用一条竖线隔开 */}
@@ -827,30 +830,40 @@ export default function TerminalPage() {
           {/* 光靠快捷键没人会发现侧栏，给个常驻入口 */}
           <button
             type="button"
-            className={`term-tabs__new ${sidePanel === "snippet" ? "is-active" : ""}`}
+            className={`btn btn--ghost btn--sm ${sidePanel === "snippet" ? "is-on" : ""}`}
             title="命令片段（Ctrl+Shift+P）"
             onClick={() => togglePanel("snippet")}
           >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M6.2 4.4 3.4 8l2.8 3.6" />
+              <path d="M9.8 4.4 12.6 8l-2.8 3.6" />
+            </svg>
             片段
           </button>
 
           <button
             type="button"
-            className={`term-tabs__new ${sidePanel === "files" ? "is-active" : ""}`}
+            className={`btn btn--ghost btn--sm ${sidePanel === "files" ? "is-on" : ""}`}
             title="文件（SFTP，跟着当前标签的服务器走）"
             disabled={!activeTabId}
             onClick={() => togglePanel("files")}
           >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.2 5.3a1.3 1.3 0 0 1 1.3-1.3h2.3l1.2 1.4h4.8a1.3 1.3 0 0 1 1.3 1.3v4.6a1.3 1.3 0 0 1-1.3 1.3H3.5a1.3 1.3 0 0 1-1.3-1.3z" />
+            </svg>
             文件
           </button>
 
           <button
             type="button"
-            className={`term-tabs__new ${sidePanel === "load" ? "is-active" : ""}`}
+            className={`btn btn--ghost btn--sm ${sidePanel === "load" ? "is-on" : ""}`}
             title="负载看板（CPU / 内存 / 磁盘 / 网络，每 3 秒刷新）"
             disabled={!activeTabId}
             onClick={() => togglePanel("load")}
           >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 12.6V8.4M8 12.6V3.8M13 12.6V6.2" />
+            </svg>
             负载
           </button>
         </div>
@@ -989,11 +1002,21 @@ export default function TerminalPage() {
       ) : null}
 
       <div className="term-hintbar">
-        <span>Ctrl+Shift+T 新建</span>
-        <span>Ctrl+Shift+W 关闭</span>
-        <span>Ctrl+Shift+P 命令片段</span>
-        <span>Ctrl+Tab 切换</span>
-        <span>Ctrl+Shift+C/V 复制粘贴</span>
+        <span>
+          <kbd>Ctrl+Shift+T</kbd>新建
+        </span>
+        <span>
+          <kbd>Ctrl+Shift+W</kbd>关闭
+        </span>
+        <span>
+          <kbd>Ctrl+Shift+P</kbd>命令片段
+        </span>
+        <span>
+          <kbd>Ctrl+Tab</kbd>切换
+        </span>
+        <span>
+          <kbd>Ctrl+Shift+C/V</kbd>复制粘贴
+        </span>
       </div>
 
       {diag ? (
