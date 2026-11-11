@@ -12,6 +12,10 @@ use crate::sftp::{SftpManager, Transfers};
 use crate::ssh::session::SessionManager;
 use crate::storage::Db;
 
+/// 产品文件夹名。快照、MCP 配置、审计日志都放 `%APPDATA%\TermHarbor\`，
+/// 都在卸载器 `RmDir /r "$APPDATA\${BUNDLEID}"` 的删除路径之外。
+pub const PRODUCT_FOLDER: &str = "TermHarbor";
+
 /// 一次启动内固定不变的路径。
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -20,8 +24,10 @@ pub struct AppPaths {
     pub db_file: PathBuf,
     /// 产品根目录（Windows 上就是 `%APPDATA%`）。
     ///
-    /// MCP 的 `mcp.json` 白名单和 `audit.jsonl` 审计日志放这里，而不是 data_dir ——
-    /// 安全配置和审计记录不该随「删除应用数据」被清掉。
+    /// **注意这里不是 `TermHarbor` 那一层** —— 它是 `%APPDATA%` 本身，
+    /// 往上拼 [`PRODUCT_FOLDER`] 才落到我们的文件夹。0.1.28 及更早直接把
+    /// `mcp.json` / `audit.jsonl` 写在这个根目录上，散在了 Roaming 里；
+    /// 现在统一走 `mcp::data_dir`。
     pub product_dir: PathBuf,
     /// 快照目录。**故意不在 data_dir 里面** —— 卸载器会把整个
     /// `%APPDATA%\com.termharbor.app` 删掉（含这里的 data_dir），

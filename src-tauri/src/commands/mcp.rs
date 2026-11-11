@@ -67,8 +67,8 @@ pub async fn mcp_config_get(state: State<'_, AppState>) -> AppResult<McpConfigVi
         })
         .collect();
 
-    let store = ConfigStore::new(&state.paths.product_dir);
-    let audit = AuditLog::new(&state.paths.product_dir);
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    let audit = AuditLog::new(&crate::mcp::data_dir(&state.paths.product_dir));
 
     Ok(McpConfigView {
         config: store.load(),
@@ -83,13 +83,13 @@ pub async fn mcp_config_get(state: State<'_, AppState>) -> AppResult<McpConfigVi
 #[tauri::command]
 pub fn mcp_config_set(state: State<'_, AppState>, config: McpConfig) -> AppResult<()> {
     validate_config(&config)?;
-    ConfigStore::new(&state.paths.product_dir).save(&config)
+    ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir)).save(&config)
 }
 
 /// 最近被拒绝的调用，给「一键允许」用。
 #[tauri::command]
 pub fn mcp_audit_recent(state: State<'_, AppState>) -> Vec<AuditEntry> {
-    AuditLog::new(&state.paths.product_dir).recent_denied(20)
+    AuditLog::new(&crate::mcp::data_dir(&state.paths.product_dir)).recent_denied(20)
 }
 
 /// 把一条被拒的命令加进白名单。
@@ -108,7 +108,15 @@ pub fn mcp_allow_command(
         ));
     }
 
-    let store = ConfigStore::new(&state.paths.product_dir);
+    // 审计里的命令是脱敏过的（`mysql -p***`），直接写进白名单会永远匹配不上
+    // 真实命令 —— 看着「已允许」，实际一条都过不去，比拒绝更糟。
+    if command.contains("***") {
+        return Err(AppError::validation(
+            "这条命令在审计里已脱敏（含 ***），无法直接作为白名单；请手动填写完整命令",
+        ));
+    }
+
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
     let mut config = store.load();
     let policy = config.connections.entry(connection.clone()).or_default();
 
@@ -208,6 +216,7 @@ mod tests {
                 enabled: true,
                 tools: vec![TOOL_EXEC.into()],
                 paths: vec!["/var/log".into()],
+                allow_secret_files: false,
                 exec: crate::mcp::config::ExecPolicy {
                     allow: vec!["df -h".into()],
                     ..Default::default()

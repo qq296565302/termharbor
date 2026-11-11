@@ -288,7 +288,8 @@ mod tests {
 
         // 但审计里如实记录了真实原因
 
-        let audit = std::fs::read_to_string(dir.join("audit.jsonl")).unwrap();
+        let audit =
+            std::fs::read_to_string(crate::mcp::data_dir(&dir).join("audit.jsonl")).unwrap();
         assert!(
             audit.contains("connection_disabled"),
             "审计没记拒绝原因：{audit}"

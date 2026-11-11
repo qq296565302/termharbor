@@ -40,8 +40,9 @@ pub struct Context {
 impl Context {
     pub fn new() -> AppResult<Self> {
         let paths = AppPaths::resolve_headless()?;
-        let config = ConfigStore::new(&paths.product_dir);
-        let audit = AuditLog::new(&paths.product_dir);
+        let dir = super::data_dir(&paths.product_dir);
+        let config = ConfigStore::new(&dir);
+        let audit = AuditLog::new(&dir);
         Ok(Self {
             paths,
             db: OnceLock::new(),
@@ -59,8 +60,9 @@ impl Context {
         // 测试各自独立：不然所有用例共用系统临时目录里的 mcp.json / audit.jsonl，
         // 并行跑时一个用例写的配置会污染另一个。
         paths.product_dir = data_dir.clone();
-        let config = ConfigStore::new(&paths.product_dir);
-        let audit = AuditLog::new(&paths.product_dir);
+        let dir = super::data_dir(&paths.product_dir);
+        let config = ConfigStore::new(&dir);
+        let audit = AuditLog::new(&dir);
         Self {
             paths,
             db: OnceLock::new(),

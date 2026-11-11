@@ -16,6 +16,8 @@ pub enum DenyReason {
     ToolNotAllowed,
     /// sftp_list 的路径不在允许前缀里
     PathNotAllowed,
+    /// 路径是凭据载体（私钥、shadow、云凭据），本地策略默认挡
+    SecretPath,
     EmptyCommand,
     CompoundCommand,
     CommandNotAllowed,
@@ -27,6 +29,7 @@ impl DenyReason {
             DenyReason::ConnectionDisabled => "connection_disabled",
             DenyReason::ToolNotAllowed => "tool_not_allowed",
             DenyReason::PathNotAllowed => "path_not_allowed",
+            DenyReason::SecretPath => "secret_path",
             DenyReason::EmptyCommand => "empty_command",
             DenyReason::CompoundCommand => "compound_command",
             DenyReason::CommandNotAllowed => "command_not_allowed",

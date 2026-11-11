@@ -104,6 +104,10 @@ pub struct ConnectionPolicy {
     /// 留空 = 任意远端路径；非空 = 只能碰这些目录前缀（收窄用）
     #[serde(default)]
     pub paths: Vec<String>,
+    /// 放开 [`secret_path_reason`] 里的凭据类文件。默认关：那些文件一读就等于
+    /// 把更大的访问权交出去，但它不是「常用路径」，所以默认挡不会妨碍干活。
+    #[serde(default)]
+    pub allow_secret_files: bool,
     #[serde(default)]
     pub exec: ExecPolicy,
 }
@@ -180,6 +184,75 @@ impl McpConfig {
             path == prefix || path.starts_with(&format!("{prefix}/"))
         })
     }
+}
+
+/// 默认不给 MCP 碰的远端文件名 —— **凭据载体**，不是「敏感目录」。
+///
+/// 判据只有一条：**读到它，等于拿到更大的访问权**。
+/// `~/.ssh/id_rsa` 可以拿去登别的机器，`authorized_keys` 一写就是永久后门，
+/// `/etc/shadow` 是离线爆破的原料。这类东西挡掉不损失任何正常能力。
+///
+/// 刻意**不收**的：`*.pem`、`*.key`、`.env`、`.bash_history`、`~/.ssh/config`。
+/// 它们要么歧义太大（`/usr/share/keyrings/*.key` 根本不是秘密），要么是排查问题的
+/// 必需品。误伤一次，用户就会把整个功能当成麻烦 —— 这比漏挡更伤。
+const SECRET_KEY_NAMES: &[&str] = &[
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa_old",
+    "authorized_keys",
+];
+
+const SECRET_CRED_NAMES: &[&str] = &[
+    ".pgpass",
+    ".my.cnf",
+    ".netrc",
+    ".git-credentials",
+    ".htpasswd",
+];
+
+/// 按路径后缀认的云 / 容器凭据。
+const SECRET_SUFFIXES: &[&str] = &[".aws/credentials", ".docker/config.json", ".kube/config"];
+
+/// 命中就返回「这是什么」，没命中返回 `None`。
+///
+/// 返回值会直接进拒绝原因给用户看，所以要能一眼看懂，而不是 `secret_path` 这种代号。
+pub fn secret_path_reason(path: &str) -> Option<&'static str> {
+    // 远端是 POSIX，但 agent 可能带反斜杠过来，统一一下再判
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_end_matches('/');
+
+    if matches!(trimmed, "/etc/shadow" | "/etc/gshadow" | "/etc/sudoers")
+        || trimmed.starts_with("/etc/sudoers.d/")
+    {
+        return Some("系统提权配置");
+    }
+
+    if trimmed.starts_with("/etc/ssh/ssh_host_") && trimmed.ends_with("_key") {
+        return Some("SSH 主机私钥");
+    }
+
+    for suffix in SECRET_SUFFIXES {
+        if trimmed.ends_with(suffix) || trimmed.contains(&format!("/{suffix}")) {
+            return Some("云或容器凭据");
+        }
+    }
+
+    // GPG 私钥同理，但它不是 SSH 也不是云凭据，单独说
+    if trimmed.ends_with(".gnupg") || trimmed.contains("/.gnupg/") {
+        return Some("GPG 密钥材料");
+    }
+
+    let name = trimmed.rsplit('/').next().unwrap_or("");
+    if SECRET_KEY_NAMES.contains(&name) {
+        return Some("SSH 密钥材料");
+    }
+    if SECRET_CRED_NAMES.contains(&name) {
+        return Some("数据库或仓库凭据");
+    }
+
+    None
 }
 
 /// 配置存储。mtime 变化时重读，读写都跨进程安全。
@@ -309,6 +382,7 @@ mod tests {
                 enabled: true,
                 tools: vec![TOOL_SFTP_LIST.into()],
                 paths: vec!["/var/log".into()],
+                allow_secret_files: false,
                 exec: ExecPolicy::default(),
             },
         );
@@ -350,6 +424,60 @@ mod tests {
         }
         assert!(McpConfig::allows_path(&policy, "/etc/shadow"));
         assert!(McpConfig::allows_path(&policy, "/"));
+    }
+
+    /// 凭据类文件默认挡，但**只挡那几类**：误伤比漏挡更伤用户耐心。
+    #[test]
+    fn secret_paths_are_recognized() {
+        for (path, why) in [
+            ("/root/.ssh/id_rsa", "SSH 密钥材料"),
+            ("/home/deploy/.ssh/id_ed25519", "SSH 密钥材料"),
+            ("/home/a/.ssh/authorized_keys", "SSH 密钥材料"),
+            ("/etc/shadow", "系统提权配置"),
+            ("/etc/sudoers", "系统提权配置"),
+            ("/etc/sudoers.d/deploy", "系统提权配置"),
+            ("/etc/ssh/ssh_host_ed25519_key", "SSH 主机私钥"),
+            ("/var/lib/pgsql/.pgpass", "数据库或仓库凭据"),
+            ("/root/.my.cnf", "数据库或仓库凭据"),
+            ("/home/a/.aws/credentials", "云或容器凭据"),
+            ("/home/a/.kube/config", "云或容器凭据"),
+            ("/home/a/.gnupg", "GPG 密钥材料"),
+        ] {
+            assert_eq!(secret_path_reason(path), Some(why), "该挡住：{path}");
+        }
+    }
+
+    /// 反例同样是需求：这些必须放行，否则 agent 连日常问题都排查不了。
+    #[test]
+    fn ordinary_paths_are_not_blocked() {
+        for path in [
+            "/var/log/nginx/error.log",
+            "/etc/nginx/nginx.conf",
+            "/home/a/.ssh/config",
+            "/home/a/.ssh/known_hosts",
+            "/home/a/.ssh",
+            "/etc/shadow-",
+            "/usr/share/keyrings/debian-archive-keyring.gpg",
+            "/opt/app/.env",
+            "/home/a/.bash_history",
+            "/data/credentials.csv",
+        ] {
+            assert_eq!(secret_path_reason(path), None, "不该挡：{path}");
+        }
+    }
+
+    /// 目录本身放行、里面的密钥要挡 —— 只想知道 key 在不在是合理需求。
+    #[test]
+    fn listing_the_ssh_dir_is_allowed_but_reading_keys_is_not() {
+        assert_eq!(secret_path_reason("/home/a/.ssh/"), None);
+        assert!(secret_path_reason("/home/a/.ssh/id_rsa").is_some());
+    }
+
+    /// 新字段默认关，旧配置（没有这个键）解析出来也是关。
+    #[test]
+    fn secret_files_gate_defaults_to_closed() {
+        let policy: ConnectionPolicy = serde_json::from_str("{}").unwrap();
+        assert!(!policy.allow_secret_files);
     }
 
     /// 但连接本身没勾，一切照旧全关 —— 升级不能把用户的服务器静默交出去。

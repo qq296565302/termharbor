@@ -298,6 +298,8 @@ export interface McpConnectionPolicy {
   enabled: boolean;
   tools: string[];
   paths: string[];
+  /** 放开 SSH 私钥 / shadow / 云凭据这类文件，默认关。 */
+  allowSecretFiles: boolean;
   exec: McpExecPolicy;
 }
 

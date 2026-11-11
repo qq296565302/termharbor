@@ -26,7 +26,7 @@ use super::exec::{validate_command, DenyReason};
 use super::jsonrpc::{RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::error::{AppError, ErrCode};
 use crate::monitor::load::LoadSnapshot;
-use crate::redact::redact;
+use crate::redact::{redact, redact_command};
 use crate::state::now_millis;
 use crate::storage::connections::ConnectionRecord;
 
@@ -222,11 +222,13 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
     // exec 的审计参数记**命令本身**而不是整包 JSON：设置页「允许这条」要用它，
     // 记成 JSON 就没法直接加进白名单了。
     let args_desc = if name == TOOL_EXEC {
+        // exec 记命令原文（设置页「允许这条」要用），但 `mysql -pXXX` 这种
+        // 短选项密码 redact 认不出来，得整段交给 redact_command 走一遍。
         arguments
             .and_then(|value| value.get("command"))
             .and_then(Value::as_str)
+            .map(redact_command)
             .unwrap_or_default()
-            .to_string()
     } else {
         // sftp_write 的 content 可能有 1MB，原样落盘会把 audit.jsonl 撑爆；
         // 正文本来也不该进审计，留个能定位的摘要就够
@@ -317,6 +319,15 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
             "没有这个连接，或它没有对 MCP 开放。可用连接请用 list_connections 查看；\
              需要开放请到「设置 → MCP 接入」勾选。",
         )),
+        Outcome::Denied {
+            reason: DenyReason::SecretPath,
+            ..
+        } => Ok(failed(
+            "这个路径是凭据类文件（SSH 私钥、authorized_keys、/etc/shadow、云厂商凭据等），\
+             本地策略默认不通过 MCP 读写。这是刻意的保护，不是权限没开。\
+             如果确实需要，请让用户在「设置 → MCP 接入」里展开这台机器，\
+             勾选「允许访问凭据类文件」；在此之前请换别的办法，不要重复尝试同一个路径。",
+        )),
         Outcome::Denied { reason, .. } => Ok(failed(format!(
             "已被本地配置拒绝（{}）。这台机器或这个工具没有对 MCP 开放。\
              请让用户在「设置 → MCP 接入」里放开；不要尝试改用别的方式达到同样目的。",
@@ -352,6 +363,21 @@ fn gated(
         return Err(DenyReason::ToolNotAllowed);
     }
     Ok(policy.clone())
+}
+
+/// 单个远端路径的闸门：先看 `paths` 收窄，再看凭据类文件。
+///
+/// 两道判定的意图不同，所以顺序也有讲究：`paths` 是用户自己划的范围，
+/// 撞上了是「你没开这个目录」；凭据文件是**默认就挡**的，撞上了是
+/// 「这个东西会放开更大的权限，要单独点一下」。
+fn path_gate(policy: &ConnectionPolicy, path: &str) -> Result<(), DenyReason> {
+    if !McpConfig::allows_path(policy, path) {
+        return Err(DenyReason::PathNotAllowed);
+    }
+    if !policy.allow_secret_files && crate::mcp::config::secret_path_reason(path).is_some() {
+        return Err(DenyReason::SecretPath);
+    }
+    Ok(())
 }
 
 async fn list_connections(ctx: &Context) -> Result<Outcome, RpcError> {
@@ -404,8 +430,8 @@ async fn sftp_list(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, 
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &path) {
+        return Ok(denied(&record, reason));
     }
 
     match list_remote(ctx, &record.id, &path).await {
@@ -498,8 +524,8 @@ async fn sftp_read(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, 
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &path) {
+        return Ok(denied(&record, reason));
     }
 
     let limit = args
@@ -608,8 +634,8 @@ async fn sftp_write(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &path) {
+        return Ok(denied(&record, reason));
     }
 
     match write_remote(ctx, &record.id, &path, &content).await {
@@ -666,8 +692,8 @@ async fn sftp_upload(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &remote_path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &remote_path) {
+        return Ok(denied(&record, reason));
     }
 
     let local = std::path::PathBuf::from(&local_path);
@@ -728,8 +754,8 @@ async fn sftp_download(ctx: &Context, arguments: Option<&Value>) -> Result<Outco
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &remote_path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &remote_path) {
+        return Ok(denied(&record, reason));
     }
 
     let state = ctx.app_state().map_err(internal)?;
@@ -804,8 +830,8 @@ async fn sftp_mkdir(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if !McpConfig::allows_path(&policy, &path) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    if let Err(reason) = path_gate(&policy, &path) {
+        return Ok(denied(&record, reason));
     }
 
     match open_sftp(ctx, &record.id).await {
@@ -845,9 +871,10 @@ async fn sftp_rename(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    // 两头都要过：只校验 from 的话，`rename("/tmp/a", "/etc/passwd")` 就绕过去了
-    if !McpConfig::allows_path(&policy, &from) || !McpConfig::allows_path(&policy, &to) {
-        return Ok(denied(&record, DenyReason::PathNotAllowed));
+    // 两头都要过：只校验 from 的话，`rename("/tmp/a", "/etc/passwd")` 就绕过去了；
+    // `rename("/home/u/.ssh/id_rsa", "/tmp/x")` 这种平移也一样要拦。
+    if let Err(reason) = path_gate(&policy, &from).and_then(|()| path_gate(&policy, &to)) {
+        return Ok(denied(&record, reason));
     }
 
     match open_sftp(ctx, &record.id).await {
@@ -1059,6 +1086,71 @@ fn describe(err: &AppError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn open_policy() -> ConnectionPolicy {
+        ConnectionPolicy {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// 凭据类文件默认挡：不限路径 ≠ 什么都能读。
+    #[test]
+    fn secret_paths_are_blocked_even_without_path_narrowing() {
+        let policy = open_policy();
+        for path in [
+            "/root/.ssh/id_rsa",
+            "/home/deploy/.ssh/authorized_keys",
+            "/etc/shadow",
+            "/home/a/.aws/credentials",
+        ] {
+            assert_eq!(
+                path_gate(&policy, path),
+                Err(DenyReason::SecretPath),
+                "该挡住：{path}"
+            );
+        }
+    }
+
+    /// 普通文件不能挡，否则连日常排查都做不了。
+    #[test]
+    fn ordinary_paths_pass_the_gate() {
+        let policy = open_policy();
+        for path in [
+            "/var/log/nginx/error.log",
+            "/etc/nginx/nginx.conf",
+            "/home/a/.ssh/config",
+            "/opt/app/.env",
+        ] {
+            assert_eq!(path_gate(&policy, path), Ok(()), "不该挡：{path}");
+        }
+    }
+
+    /// 勾了「允许凭据类文件」就真放开 —— 不然这个开关没意义。
+    #[test]
+    fn allow_secret_files_opens_the_gate() {
+        let policy = ConnectionPolicy {
+            enabled: true,
+            allow_secret_files: true,
+            ..Default::default()
+        };
+        assert_eq!(path_gate(&policy, "/root/.ssh/id_rsa"), Ok(()));
+        assert_eq!(path_gate(&policy, "/etc/shadow"), Ok(()));
+    }
+
+    /// 路径收窄优先于凭据判定：自己划的范围外，连报错都不该透露文件属于哪类。
+    #[test]
+    fn path_narrowing_wins_over_secret_check() {
+        let policy = ConnectionPolicy {
+            enabled: true,
+            paths: vec!["/var/log".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            path_gate(&policy, "/root/.ssh/id_rsa"),
+            Err(DenyReason::PathNotAllowed)
+        );
+    }
 
     #[test]
     fn exposes_every_declared_tool_in_stable_order() {

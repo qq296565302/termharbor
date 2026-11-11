@@ -38,6 +38,7 @@ function emptyPolicy(): McpConnectionPolicy {
     enabled: false,
     tools: [],
     paths: [],
+    allowSecretFiles: false,
     exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
   };
 }
@@ -67,6 +68,7 @@ function summarize(policy: McpConnectionPolicy): string {
       policy.exec.allow.length === 0 ? "任意单条命令" : `${policy.exec.allow.length} 条命令`,
     );
   }
+  if (policy.allowSecretFiles) parts.push("含凭据文件");
   return parts.join(" · ");
 }
 
@@ -346,6 +348,27 @@ export default function McpSettings() {
 
                           <div className="mcp__row">
                             <span className="mcp__caption">
+                              凭据类文件
+                              <em className="mcp__hint">
+                                默认挡住 SSH 私钥、authorized_keys、/etc/shadow、sudoers、
+                                .pgpass、云厂商凭据。普通配置文件（.env、nginx.conf、
+                                ~/.ssh/config）不受影响。
+                              </em>
+                            </span>
+                            <label className="mcp__tool" title="这些文件一读就等于把更大的权限交出去">
+                              <input
+                                type="checkbox"
+                                checked={policy.allowSecretFiles}
+                                onChange={(event) =>
+                                  patch(item.id, { allowSecretFiles: event.target.checked })
+                                }
+                              />
+                              允许智能体读写凭据类文件
+                            </label>
+                          </div>
+
+                          <div className="mcp__row">
+                            <span className="mcp__caption">
                               限制可执行命令
                               <em className="mcp__hint">
                                 {policy.exec.allow.length === 0
@@ -471,10 +494,13 @@ export default function McpSettings() {
               <span className="mcp__denied-conn">{entry.connection}</span>
               <code className="mcp__denied-cmd">{entry.args || entry.tool}</code>
               <span className="mcp__denied-reason">{entry.reason}</span>
-              {entry.reason === "command_not_allowed" ? (
+              {entry.reason === "command_not_allowed" && !entry.args.includes("***") ? (
                 <button type="button" onClick={() => void allowDenied(entry)}>
                   允许这条
                 </button>
+              ) : null}
+              {entry.reason === "secret_path" ? (
+                <span className="mcp__denied-reason">需在「细化权限」里放开凭据文件</span>
               ) : null}
             </div>
           ))}

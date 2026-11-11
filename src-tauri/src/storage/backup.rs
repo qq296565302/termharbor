@@ -59,7 +59,7 @@ pub struct Snapshot {
 /// 传 `data_dir`（Windows 上是 `%APPDATA%`）而不是 app_data_dir，
 /// 就是为了跳出 bundle id 目录 —— 见模块开头的说明。
 pub fn dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("TermHarbor").join("backups")
+    data_dir.join(crate::state::PRODUCT_FOLDER).join("backups")
 }
 
 /// 拷一份当前库到备份目录，并按 `keep` 清理旧快照。
@@ -229,7 +229,7 @@ fn count_connections(path: &Path) -> Option<usize> {
 /// 0.1.16 及更早把 `dir()` 喂成了 `app_data_dir`，于是快照多套了一层，正好落进
 /// 卸载器的 `RmDir /r "$APPDATA\com.termharbor.app"` 里 —— 安全网失效。
 pub fn legacy_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("TermHarbor").join("backups")
+    data_dir.join(crate::state::PRODUCT_FOLDER).join("backups")
 }
 
 /// 把老位置的快照搬到正确位置。返回搬走的份数。
