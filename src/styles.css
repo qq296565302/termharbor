@@ -1601,6 +1601,9 @@ a:focus-visible,
 
 /* ------------------------------------------------------------ SFTP 文件管理（M3） */
 
+/* 面板改成「工具栏 / 路径条 / 列表 / 传输区」四段贴边结构。
+   原来是带 8px 内边距 + 7px 间距的一摞圆角块，三个区各有一圈边框，
+   面板一窄就变成三个小方框挤在一起，像三个控件而不是一个文件管理器。 */
 .file-panel {
   position: relative;
   display: flex;
@@ -1608,9 +1611,7 @@ a:focus-visible,
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  gap: 7px;
-  padding: 8px 10px 0;
-  background: var(--bg);
+  background: var(--bg-panel);
 }
 
 /* 拖拽悬停：虚线框 + 一层半透明蒙版，松手前就能确认会传到哪里 */
@@ -1620,7 +1621,7 @@ a:focus-visible,
   inset: 4px;
   z-index: 4;
   border: 2px dashed var(--accent);
-  border-radius: 10px;
+  border-radius: var(--r-lg);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   pointer-events: none;
 }
@@ -1636,36 +1637,39 @@ a:focus-visible,
 }
 
 .files-drop__text {
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 7px 13px;
+  border-radius: var(--r-md);
   background: var(--accent);
-  color: #fff;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--on-accent);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
 }
 
 .files-hint {
   color: var(--text-faint);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .files-hint--pad {
-  padding: 18px 12px;
+  padding: 22px 12px;
+  text-align: center;
 }
 
 .files-error {
-  margin: 0;
+  margin: 8px 10px 0;
   padding: 7px 10px;
-  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  border-radius: var(--r-md);
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 /* 进度类提示（"已开始下载 x"）：中性色，且会自动消失 */
 .files-error--info {
-  background: var(--bg-muted);
+  border-color: var(--border);
+  background: var(--bg-subtle);
   color: var(--text-muted);
 }
 
@@ -1673,7 +1677,7 @@ a:focus-visible,
 .files-error__detail {
   margin-left: 4px;
   opacity: 0.75;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .files-bar {
@@ -1681,6 +1685,23 @@ a:focus-visible,
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* 导航三件套：靠得近一点，读成一枚分段控件 */
+.files-bar__group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.files-bar__divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border);
 }
 
 .files-bar__spacer {
@@ -1689,7 +1710,7 @@ a:focus-visible,
 
 .files-bar__home {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-faint);
   max-width: 240px;
   overflow: hidden;
@@ -1697,23 +1718,24 @@ a:focus-visible,
   white-space: nowrap;
 }
 
+/* 路径条：贴边浅底，像地址栏而不是第二个按钮组 */
 .files-crumbs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-sunken);
+  gap: 1px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .files-crumbs__item {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .files-crumbs__sep {
@@ -1721,9 +1743,9 @@ a:focus-visible,
 }
 
 .files-crumbs__link {
-  padding: 1px 4px;
+  padding: 2px 5px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -1738,6 +1760,9 @@ a:focus-visible,
   display: flex;
   gap: 6px;
   align-items: center;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
 }
 
 .files-inline .input {
@@ -1749,20 +1774,22 @@ a:focus-visible,
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
+  background: var(--bg-panel);
 }
 
+/* 五列宽度全是固定值 —— 这一列写 auto 会错位。
+   因为每一行是**各自独立的 grid**（不是 table），auto 列宽各算各的：
+   表头那行最后一个格子是空 span，算出 0；数据行有三个图标按钮，算出 58。
+   结果从第二列起，表头比正文整体右移 58px。 */
 .files-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 86px 132px 56px auto;
+  grid-template-columns: minmax(0, 1fr) 72px 118px 56px 76px;
   gap: 10px;
   align-items: center;
-  padding: 4px 10px;
+  height: 32px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
-  min-height: 34px;
+  font-size: var(--fs-sm);
 }
 
 .files-row:last-child {
@@ -1770,18 +1797,20 @@ a:focus-visible,
 }
 
 .files-row:hover {
-  background: var(--bg-sunken);
+  background: var(--bg-subtle);
 }
 
+/* 表头浅底 + 小字：和正文拉开，滚动时钉在顶上 */
 .files-row--head {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--bg-muted);
-  color: var(--text-muted);
-  font-size: 11.5px;
-  min-height: 28px;
-  border-bottom: 1px solid var(--border-strong);
+  height: 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  font-weight: 600;
 }
 
 .files-cell--num {
@@ -1792,8 +1821,8 @@ a:focus-visible,
 
 .files-mode {
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
 }
 
 .files-name {
@@ -1802,16 +1831,18 @@ a:focus-visible,
   gap: 7px;
   min-width: 0;
   padding: 2px 4px;
+  margin-left: -4px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .files-name.is-dir {
   cursor: pointer;
+  color: var(--text);
 }
 
 .files-name.is-dir:hover {
@@ -1819,9 +1850,28 @@ a:focus-visible,
   color: var(--accent);
 }
 
+/* 图标列定宽，文件名的起始 x 坐标才不会随图标形状跳动 */
 .files-name__icon {
-  flex: 0 0 auto;
-  font-size: 12px;
+  display: grid;
+  flex: 0 0 16px;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-faint);
+}
+
+.files-name.is-dir .files-name__icon {
+  color: var(--accent);
+}
+
+.files-name__svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .files-name__text {
@@ -1834,8 +1884,26 @@ a:focus-visible,
 .files-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   justify-content: flex-end;
+}
+
+/* 行内操作：默认压到 45% 不抢文件名，鼠标进这一行才完全显形。
+   直接隐藏会让触屏和键盘用户找不到入口，所以是变淡不是消失。 */
+.files-act {
+  opacity: 0.45;
+  color: var(--text-muted);
+  transition: opacity 120ms ease;
+}
+
+.files-row:hover .files-act,
+.files-act:focus-visible {
+  opacity: 1;
+}
+
+.files-act--danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .files-link {
@@ -1843,13 +1911,12 @@ a:focus-visible,
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 .files-link:hover {
   color: var(--accent);
-  text-decoration: underline;
 }
 
 .files-link--danger:hover {
@@ -1858,24 +1925,17 @@ a:focus-visible,
 
 .files-danger {
   color: var(--danger);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
-.btn--danger {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
+/* 传输区贴底：它是「文件列表的附属信息」，不该和列表抢同一层边框 */
 .files-transfers {
   flex: 0 0 auto;
-  max-height: 168px;
-  margin-bottom: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-muted);
+  max-height: 172px;
+  padding: 9px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-subtle);
   overflow-y: auto;
 }
 
@@ -1883,15 +1943,16 @@ a:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 7px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
 }
 
 .files-transfers__list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1902,19 +1963,30 @@ a:focus-visible,
   grid-template-columns: 18px minmax(0, 120px) minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
+/* 方向标做成小方块，↑↓ 两个字符宽度不同，不装进固定框里会参差 */
 .files-transfer__tag {
-  font-family: var(--mono);
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
   color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
 }
 
 .files-transfer__tag.is-done {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
   color: var(--ok);
 }
 
 .files-transfer__tag.is-failed {
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
@@ -1926,8 +1998,8 @@ a:focus-visible,
 }
 
 .files-transfer__bar {
-  height: 5px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 2px;
   background: var(--bg-sunken);
   overflow: hidden;
 }
@@ -1936,7 +2008,7 @@ a:focus-visible,
   display: block;
   height: 100%;
   width: 0;
-  border-radius: 3px;
+  border-radius: 2px;
   background: var(--accent);
   transition: width 150ms linear;
 }
@@ -2009,88 +2081,146 @@ a:focus-visible,
 
 /* ------------------------------------------------------------ 命令片段侧栏（M6） */
 
+/* 侧栏底色用 subtle，条目用纯白卡片：这样一列片段是「一张张可以点的卡片」，
+   而不是贴在面板上的几行文字。 */
 .snip {
   display: flex;
-  flex: 0 0 268px;
+  flex: 0 0 300px;
   flex-direction: column;
-  width: 268px;
+  width: 300px;
   min-height: 0;
   border-left: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--bg-sunken);
 }
 
 .snip__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
+  gap: 3px;
+  height: 44px;
+  padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 12px;
+  background: var(--bg-panel);
+}
+
+.snip__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.snip__head-spacer {
+  flex: 1;
 }
 
 .snip__close {
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
   color: var(--text-faint);
-  font-size: 15px;
-  line-height: 1;
 }
 
-.snip__close:hover {
+.snip__close:hover:not(:disabled) {
+  background: var(--danger-soft);
   color: var(--danger);
+}
+
+.snip__searchbox {
+  position: relative;
+  padding: 9px 10px 8px;
+}
+
+.snip__searchicon {
+  position: absolute;
+  top: 50%;
+  left: 20px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 .snip__search {
-  width: calc(100% - 20px);
-  margin: 8px 10px;
+  width: 100%;
+  padding-left: 30px;
 }
 
 .snip__error {
-  margin: 0 10px 6px;
+  margin: 0 10px 8px;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
   color: var(--danger);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
 }
 
 .snip__list {
   flex: 1;
   min-height: 0;
-  padding: 0 6px 6px;
+  padding-bottom: 8px;
   overflow-y: auto;
 }
 
 .snip__empty {
-  margin: 12px 6px;
+  margin: 22px 12px;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 .snip__group {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
+/* 分组头吸顶：滚过十几条之后还知道自己在哪一组 */
 .snip__group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 5px;
   width: 100%;
-  padding: 5px 6px;
+  padding: 6px 12px;
   border: 0;
-  border-radius: 5px;
-  background: transparent;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
   text-align: left;
 }
 
 .snip__group-head:hover {
-  background: var(--bg-muted);
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 
+/* 展开时箭头朝下，收起时朝右 —— 用 transform 转，不换字符 */
 .snip__caret {
-  width: 10px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
   color: var(--text-faint);
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+
+.snip__caret.is-collapsed {
+  transform: rotate(0deg);
+}
+
+.snip__caret svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .snip__group-name {
@@ -2098,76 +2228,85 @@ a:focus-visible,
 }
 
 .snip__count {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-panel);
   color: var(--text-faint);
-  font-size: 10.5px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 15px;
 }
 
 .snip__items {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 5px;
   margin: 0;
-  padding: 0 0 0 4px;
+  padding: 8px 10px;
   list-style: none;
 }
 
-/* 一项里有两个动作：点主体插入终端，点「表格」走诊断面板 */
 .snip__item {
   display: flex;
   align-items: stretch;
   gap: 4px;
 }
 
+/* 一项里有两个动作：点主体插入终端，右侧图标走表格/编辑/删除 */
 .snip__insert {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
-  padding: 5px 7px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--bg-sunken);
+  padding: 7px 9px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
   text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .snip__insert:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-line);
   background: var(--accent-soft);
 }
 
-.snip__view {
-  flex: 0 0 auto;
-  padding: 0 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text-muted);
-  font-size: 10.5px;
-  white-space: nowrap;
+/* 会改动系统的片段：左边一道 2px 竖条。同时还有一个文字标签 ——
+   只靠颜色区分，色弱用户和暗色主题下都不可靠。 */
+.snip__insert.is-dangerous {
+  border-left: 2px solid var(--warn);
+  padding-left: 8px;
 }
 
-.snip__view:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+.snip__insert.is-critical {
+  border-left: 2px solid var(--danger);
+  padding-left: 8px;
 }
 
 .snip__name {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .snip__risk {
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 10px;
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 15px;
 }
 
 .snip__risk.is-dangerous {
-  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--warn);
 }
 
@@ -2177,20 +2316,86 @@ a:focus-visible,
 }
 
 .snip__cmd {
+  display: block;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.snip__foot {
-  margin: 0;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
+/* 行内操作竖排：侧栏只有 300px，三个按钮横排会把命令挤成两个字符 */
+.snip__rowacts {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: center;
+}
+
+/* 删到只剩确认时改横排，否则条目会突然长高一截 */
+.snip__item.is-deleting .snip__rowacts {
+  flex-direction: row;
+  align-items: center;
+}
+
+/* 20px 高是为了两个按钮竖排（20+2+20）刚好落在 46px 的卡片高度里。
+   原来 22px 两枚加 3px 间距是 47 —— 溢出 1px，第二个图标会掉到卡片外。 */
+.snip__icon-btn {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
   color: var(--text-faint);
   font-size: 10.5px;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.snip__item:hover .snip__icon-btn {
+  color: var(--text-muted);
+}
+
+.snip__icon-btn:hover {
+  background: var(--bg-panel);
+  color: var(--accent);
+}
+
+.snip__icon-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.snip__icon-btn.is-danger {
+  color: var(--danger);
+}
+
+.snip__icon-btn.is-danger:hover {
+  background: var(--danger-soft);
+}
+
+.snip__icon-btn.is-wide {
+  width: auto;
+  padding: 0 6px;
+  opacity: 1;
+}
+
+.snip__foot {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
 }
 
 .term-notice {
@@ -2233,7 +2438,8 @@ a:focus-visible,
   position: fixed;
   inset: 0;
   z-index: 45;
-  background: color-mix(in srgb, #0b1622 52%, transparent);
+  background: color-mix(in srgb, #0b1622 44%, transparent);
+  backdrop-filter: blur(1.5px);
 }
 
 .diag {
@@ -2243,33 +2449,58 @@ a:focus-visible,
   left: 50%;
   display: flex;
   flex-direction: column;
-  width: min(780px, calc(100vw - 80px));
-  max-height: min(72vh, 640px);
-  padding-bottom: 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  background: var(--bg);
-  box-shadow: 0 24px 64px color-mix(in srgb, #000 34%, transparent);
+  width: min(820px, calc(100vw - 72px));
+  max-height: min(76vh, 660px);
+  padding-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
   transform: translate(-50%, -50%);
   overflow: hidden;
 }
 
+/* 头部给一层浅底：浮层里「标题区」和「内容区」同色时，滚动起来分不清
+   哪一行是表头、哪一行是标题 */
 .diag__head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.diag__glyph {
+  display: grid;
+  flex: 0 0 22px;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.diag__glyph svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .diag__title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .diag__time {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2278,76 +2509,93 @@ a:focus-visible,
 }
 
 .diag__close {
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
   color: var(--text-faint);
-  font-size: 18px;
-  line-height: 1;
 }
 
-.diag__close:hover {
+.diag__close:hover:not(:disabled) {
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
 .diag__hint {
-  margin: 16px 14px;
+  margin: 16px;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .diag__error {
-  margin: 10px 14px 0;
-  padding: 7px 10px;
-  border-radius: 7px;
+  margin: 14px 16px 0;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  border-radius: var(--r-md);
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
+}
+
+/* 结论条：整块浮层最有价值的就是这一句，原来它和正文同字号同颜色，
+   混在几十行表格上方等于没写。左侧一道主色竖条就够，不用加图标。 */
+.diag__conclusion {
+  display: flex;
+  margin: 14px 16px 0;
+  padding: 11px 13px;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
 }
 
 .diag__summary {
-  margin: 10px 14px 0;
+  margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: 1.6;
 }
 
 .diag__warning {
-  margin: 6px 14px 0;
-  padding: 7px 10px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  margin: 10px 16px 0;
+  padding: 8px 11px;
+  border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
   color: var(--warn);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 
 .diag__table-wrap {
-  margin: 10px 14px 0;
-  max-height: 46vh;
+  margin: 12px 16px 0;
+  max-height: 44vh;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
   overflow: auto;
 }
 
+/* collapse 模式下 sticky 表头的边框会跟着滚走，所以用 separate + 0 间距 */
 .diag__table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12.5px;
 }
 
 .diag__table th {
   position: sticky;
   top: 0;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-strong);
-  background: var(--bg-muted);
+  z-index: 1;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
   color: var(--text-muted);
-  font-weight: 500;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
   text-align: left;
   white-space: nowrap;
 }
 
 .diag__table td {
-  padding: 5px 10px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -2359,41 +2607,51 @@ a:focus-visible,
 }
 
 .diag__table tbody tr:hover {
-  background: var(--bg-sunken);
+  background: var(--bg-subtle);
 }
 
 .diag__table td.is-key {
   font-family: var(--mono);
+  font-size: 12px;
 }
 
 .diag__foot {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 10px 14px 0;
+  margin: 12px 16px 0;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
 }
 
 .diag__cmd {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  color: var(--text-faint);
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 展开原始输出时在剩余空间里自己滚，不把浮层顶爆 */
 .diag__raw {
-  margin: 8px 14px 0;
-  padding: 8px 10px;
-  max-height: 180px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 10px 16px 0;
+  padding: 10px 12px;
   overflow: auto;
-  border-radius: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   background: var(--bg-sunken);
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--fs-xs);
+  line-height: 1.65;
   white-space: pre;
 }
 
@@ -2786,93 +3044,15 @@ a:focus-visible,
   font-size: 11px;
 }
 
-/* ------------------------------------------------------------ 片段侧栏视觉优化 */
+/* ------------------------------------------------------------ 片段 · 环境探测 */
 
-/* 加宽一点：命令那行经常被截断 */
-.snip {
-  flex: 0 0 300px;
-  width: 300px;
-}
-
-.snip__search {
-  height: 30px;
-  margin: 9px 10px;
-  width: calc(100% - 20px);
-  border-radius: 7px;
-}
-
-/* 分组头吸顶：14 条环境准备滚下去之后还知道自己在哪一组 */
-.snip__group-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  margin: 0 -6px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  background: var(--bg);
-}
-
-.snip__group-head:hover {
-  background: var(--bg-muted);
-}
-
-.snip__items {
-  gap: 4px;
-  padding: 6px 0 6px 2px;
-}
-
-/* 用左侧色条代替小标签：扫一眼就知道哪条会改系统 */
-.snip__insert {
-  position: relative;
-  padding: 6px 9px 6px 13px;
-  border-radius: 7px;
-}
-
-.snip__insert::before {
-  content: "";
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 5px;
-  width: 2px;
-  border-radius: 2px;
-  background: transparent;
-  transition: width 120ms ease;
-}
-
-.snip__insert.is-dangerous::before {
-  background: var(--warn);
-}
-
-.snip__insert.is-critical::before {
-  background: var(--danger);
-}
-
-.snip__insert:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-muted);
-}
-
-.snip__insert:hover::before {
-  width: 3px;
-}
-
-.snip__name {
-  font-size: 12.5px;
-}
-
-.snip__cmd {
-  font-size: 10px;
-  color: var(--text-faint);
-}
-
-/* 环境探测结果：一行 chips，绿点=已装，虚线圈=未装 */
+/* 环境探测结果：一行 chips，实心点=已装，虚线圈=未装 */
 .snip__env {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
-  padding: 2px 4px 8px 6px;
+  padding: 2px 12px 8px;
 }
 
 .snip__env-chip {
@@ -2882,9 +3062,9 @@ a:focus-visible,
   padding: 2px 7px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--bg);
-  font-size: 10.5px;
+  background: var(--bg-panel);
   color: var(--text);
+  font-size: 10.5px;
 }
 
 .snip__env-chip.is-off {
@@ -2911,7 +3091,7 @@ a:focus-visible,
 
 .snip__env-hint {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .snip__env-refresh {
@@ -2919,7 +3099,7 @@ a:focus-visible,
   border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
 }
 
 .snip__env-refresh:hover {
@@ -2949,60 +3129,43 @@ a:focus-visible,
 
 /* ------------------------------------------------------------ 片段：新建/编辑 */
 
-.snip__head-spacer {
-  flex: 1;
-}
-
-.snip__new {
-  padding: 2px 8px;
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.snip__new:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
+/* 表单浮在列表上方：白底 + 边框 + 阴影，明确「这是一个临时面板」 */
 .snip__form {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 0 10px 8px;
-  padding: 9px;
+  gap: 7px;
+  margin: 0 10px 10px;
+  padding: 11px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg-sunken);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-md);
 }
 
 .snip__form-input {
   width: 100%;
-  padding: 5px 7px;
-  font-size: 12px;
 }
 
 .snip__form-cmd {
-  min-height: 56px;
+  min-height: 62px;
+  padding: 6px 9px;
   font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
   resize: vertical;
 }
 
 .snip__form-hint {
   margin: 0;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
 .snip__form-hint code {
   padding: 0 3px;
   border-radius: 3px;
-  background: var(--bg);
+  background: var(--bg-sunken);
   font-family: var(--mono);
 }
 
@@ -3010,52 +3173,26 @@ a:focus-visible,
   display: flex;
   align-items: center;
   gap: 6px;
+  padding-top: 2px;
 }
 
+/* 风险标签：编辑时随输入实时变，颜色即结论 */
 .snip__form-risk {
-  padding: 2px 7px;
+  padding: 1px 7px;
   border-radius: 999px;
-  font-size: 10.5px;
-  background: var(--bg-muted);
+  background: var(--bg-sunken);
   color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 16px;
 }
 
 .snip__form-risk.is-dangerous {
-  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--warn);
 }
 
 .snip__form-risk.is-critical {
   background: var(--danger-soft);
-  color: var(--danger);
-}
-
-/* 自定义片段的两个小操作按钮 */
-.snip__edit,
-.snip__confirm {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 2px;
-}
-
-.snip__icon-btn {
-  width: 22px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--text-muted);
-  font-size: 10.5px;
-  line-height: 20px;
-}
-
-.snip__icon-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.snip__icon-btn.is-danger {
-  border-color: var(--danger);
   color: var(--danger);
 }
 
@@ -3271,8 +3408,8 @@ a:focus-visible,
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  padding: 12px 4px;
+  gap: 10px;
+  padding: 16px;
 }
 
 /* ------------------------------------------------------------ 面板紧凑模式 */
@@ -3280,10 +3417,10 @@ a:focus-visible,
    时间与权限在会话页里不是高频信息，需要时把面板拖宽也不会回来 —— 这是刻意的取舍。 */
 
 .file-panel.is-compact .files-row {
-  grid-template-columns: minmax(0, 1fr) 62px auto;
+  grid-template-columns: minmax(0, 1fr) 58px 76px;
   gap: 8px;
-  padding: 3px 6px;
-  min-height: 30px;
+  height: 30px;
+  padding: 0 8px;
 }
 
 .file-panel.is-compact .files-row > :nth-child(3),
@@ -3293,16 +3430,26 @@ a:focus-visible,
 
 .file-panel.is-compact .files-bar {
   gap: 4px;
+  padding: 6px 8px;
 }
 
+/* 只压高度和左右内边距。原来写的是 padding: 3px 7px —— .btn 现在是定高
+   flex 盒，上下 padding 一加就比同行图标高出一截，工具栏看着是歪的。 */
 .file-panel.is-compact .files-bar .btn {
-  padding: 3px 7px;
-  font-size: 11.5px;
+  height: 22px;
+  padding: 0 7px;
+  font-size: var(--fs-xs);
+}
+
+.file-panel.is-compact .files-bar .btn--icon {
+  width: 22px;
+  padding: 0;
 }
 
 .file-panel.is-compact .files-crumbs {
-  padding: 4px 6px;
-  font-size: 11px;
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 10.5px;
 }
 
 .file-panel.is-compact .files-transfers {
@@ -3316,21 +3463,26 @@ a:focus-visible,
   flex: 0 0 min(560px, 56%);
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--border-strong);
-  background: var(--bg);
+  border-left: 1px solid var(--border);
+  /* 看板底色比卡片深一档，卡片才能「浮」起来。原来卡片是 sunken、底色是白，
+     等于每块都比背景更脏，一整排看下来像表格截图。 */
+  background: var(--bg-subtle);
 }
 
 .term-load__head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px 6px 10px;
+  height: 44px;
+  padding: 0 10px 0 12px;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  background: var(--bg-panel);
 }
 
 .term-load__title {
-  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 .term-load__host {
@@ -3339,69 +3491,88 @@ a:focus-visible,
   overflow: hidden;
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .term-load__auto {
-  padding: 1px 7px;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--h-sm);
+  padding: 0 9px;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: 10.5px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.term-load__auto:hover {
+  border-color: var(--text-faint);
+  color: var(--text);
 }
 
 .term-load__auto.is-on {
-  border-color: var(--accent);
+  border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.term-load__refresh {
-  padding: 0 5px;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1;
-}
-
-.term-load__refresh:hover:not(:disabled) {
-  color: var(--accent);
-}
-
-.term-load__refresh:disabled {
+.term-load__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
   opacity: 0.4;
 }
 
-.term-load__close {
-  padding: 0 5px;
-  border: 0;
-  background: transparent;
-  color: var(--text-faint);
-  font-size: 16px;
-  line-height: 1;
+.term-load__auto.is-on .term-load__pulse {
+  opacity: 1;
+  animation: load-pulse 2s ease-in-out infinite;
 }
 
-.term-load__close:hover {
+@keyframes load-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* 采样灯一闪一闪在弱设备上会明显掉帧，也不该强加给偏头晕的人 */
+@media (prefers-reduced-motion: reduce) {
+  .term-load__auto.is-on .term-load__pulse {
+    animation: none;
+  }
+}
+
+.term-load__close {
+  color: var(--text-faint);
+}
+
+.term-load__close:hover:not(:disabled) {
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
 .term-load__hint {
-  margin: 12px 12px 0;
+  margin: 12px 13px 0;
   color: var(--text-faint);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 
 .term-load__error,
 .term-load__warn {
-  margin: 8px 12px 0;
-  padding: 6px 9px;
-  border-radius: 7px;
-  font-size: 11.5px;
+  margin: 10px 13px 0;
+  padding: 7px 10px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
@@ -3415,38 +3586,39 @@ a:focus-visible,
   color: var(--warn);
 }
 
-/* 卡片区：可滚动，卡片之间 8px */
+/* 卡片区：可滚动，卡片之间 10px */
 .term-load__body {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-height: 0;
-  padding: 10px 12px 12px;
+  padding: 10px;
   overflow-y: auto;
 }
 
 .term-load__foot {
   margin: 0;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .load-card {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  padding: 8px 10px;
+  gap: 7px;
+  padding: 11px 13px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-sunken);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-xs);
 }
 
 .load-card--meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 6px 12px;
+  gap: 8px 14px;
 }
 
 .load-card__head {
@@ -3455,45 +3627,57 @@ a:focus-visible,
   justify-content: space-between;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
+}
+
+.load-card__name {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .load-card__head--sub {
-  margin-top: 4px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
 .load-card__value {
   color: var(--text);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .load-card__hint {
   margin: 0;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
 .load-card__line {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 /* CPU 历史折线：SVG 拉满宽度，1px 线 */
 .load-spark {
   width: 100%;
-  height: 28px;
+  height: 30px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
   overflow: visible;
 }
 
 .load-spark--empty {
   color: var(--text-faint);
-  font-size: 10.5px;
-  line-height: 28px;
+  font-size: var(--fs-xs);
+  line-height: 30px;
+  text-align: center;
 }
 
 .load-spark__line {
@@ -3508,28 +3692,32 @@ a:focus-visible,
 .load-cores {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 6px;
+  gap: 5px 8px;
 }
 
 .load-core {
   display: flex;
   align-items: center;
-  gap: 4px;
-  width: 62px;
+  gap: 5px;
+  width: 70px;
+}
+
+.load-core__label {
+  flex: 0 0 auto;
 }
 
 .load-core__bar {
   flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--bg-muted);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-sunken);
   overflow: hidden;
 }
 
 .load-core__fill {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .load-core__label {
@@ -3541,16 +3729,16 @@ a:focus-visible,
 /* 内存/Swap 的横向进度条 */
 .load-bar {
   display: block;
-  height: 7px;
-  border-radius: 4px;
-  background: var(--bg-muted);
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
   overflow: hidden;
 }
 
 .load-bar__fill {
   display: block;
   height: 100%;
-  border-radius: 4px;
+  border-radius: 3px;
   transition: width 200ms ease;
 }
 
@@ -3573,7 +3761,7 @@ a:focus-visible,
   background: var(--danger);
 }
 
-/* 负载三元组 */
+/* 负载三元组：三个数字是看板上第二重要的信息，给它独立底色和更大的字 */
 .load-triple {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -3584,28 +3772,32 @@ a:focus-visible,
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 5px 0;
-  border-radius: 6px;
-  background: var(--bg);
+  gap: 1px;
+  padding: 8px 0 7px;
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
 }
 
 .load-triple__num {
   color: var(--text);
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 19px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .load-triple__label {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 10.5px;
 }
 
 /* 列表行：磁盘 / 网络 / 进程共用 */
 .load-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3616,7 +3808,7 @@ a:focus-visible,
   grid-template-columns: minmax(0, 1fr) 72px auto 38px;
   gap: 8px;
   align-items: center;
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
 }
 
 .load-row--net {
@@ -3632,26 +3824,27 @@ a:focus-visible,
   overflow: hidden;
   color: var(--text);
   font-family: var(--mono);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .load-row__bar {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--bg-muted);
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-sunken);
   overflow: hidden;
 }
 
 .load-row__fill {
   display: block;
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .load-row__meta {
   color: var(--text-muted);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3659,7 +3852,7 @@ a:focus-visible,
 .load-row__num {
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -3672,28 +3865,32 @@ a:focus-visible,
 .load-row__pid {
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--fs-xs);
 }
 
 .load-row__rate {
   color: var(--text-muted);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+/* 底部四格：标签在上、值在下，值用等宽字体对齐 */
 .load-meta__label {
   display: block;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 10.5px;
+  margin-bottom: 1px;
 }
 
 .load-meta__value {
   display: block;
   overflow: hidden;
   color: var(--text);
-  font-size: 11.5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

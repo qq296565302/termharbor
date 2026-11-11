@@ -47,6 +47,14 @@ export default function DiagPanel({
 
       <section className="diag" role="dialog" aria-label={title}>
         <header className="diag__head">
+          {/* 标题前的方框图标：没有任何视觉锚点时，浮层标题和表格之间的关系
+              只能靠读文字建立，多份诊断叠开就分不清哪个是哪个 */}
+          <span className="diag__glyph" aria-hidden="true">
+            <svg viewBox="0 0 16 16">
+              <rect x="2" y="3" width="12" height="10" rx="1.6" />
+              <path d="M2 6.6h12M6.4 6.6V13" />
+            </svg>
+          </span>
           <span className="diag__title">{title}</span>
           {result ? (
             <span className="diag__time">{formatTime(result.fetchedAt)}</span>
@@ -54,14 +62,26 @@ export default function DiagPanel({
           <span className="diag__spacer" />
           <button
             type="button"
-            className="btn btn--sm"
+            className="btn btn--ghost btn--sm"
             onClick={onRefresh}
             disabled={loading}
           >
-            刷新
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+              <path d="M13 2.6V5h-2.4" />
+            </svg>
+            {loading ? "刷新中" : "刷新"}
           </button>
-          <button type="button" className="diag__close" onClick={onClose} title="关闭（Esc）">
-            ×
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm diag__close"
+            onClick={onClose}
+            title="关闭（Esc）"
+            aria-label="关闭"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" />
+            </svg>
           </button>
         </header>
 
@@ -71,7 +91,11 @@ export default function DiagPanel({
 
         {result ? (
           <>
-            <p className="diag__summary">{result.summary}</p>
+            {/* 结论条：整块浮层最有价值的就是这一句，原来它和正文同字号同颜色，
+                混在 40 行表格上方等于没写 */}
+            <div className="diag__conclusion">
+              <span className="diag__summary">{result.summary}</span>
+            </div>
 
             {result.warning ? <p className="diag__warning">{result.warning}</p> : null}
 
@@ -108,13 +132,15 @@ export default function DiagPanel({
             ) : null}
 
             <div className="diag__foot">
-              <code className="diag__cmd">{result.command}</code>
+              <code className="diag__cmd" title={result.command}>
+                {result.command}
+              </code>
               <button
                 type="button"
-                className="files-link"
+                className="btn btn--ghost btn--sm"
                 onClick={() => setShowRaw((open) => !open)}
               >
-                {showRaw ? "收起原始输出" : "查看原始输出"}
+                {showRaw ? "收起原始输出" : "原始输出"}
               </button>
             </div>
 

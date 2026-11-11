@@ -56,11 +56,16 @@ export function ipcLabel(
   failure?: IpcFailure | null,
 ): Label {
   if (errorCode) {
-    return { text: errorCode, hint: "启动自检失败：前端调 Rust 后端没通，错误码含义见「关于」页" };
+    // 只甩一个 `INTERNAL` / `DB_ERROR` 出去，看不出是"后端没起来"还是"某个功能出错"，
+    // 像是程序把内部枚举漏在了界面上。给一句人话，错误码留在括号里给排障用。
+    return {
+      text: `后端未就绪（${errorCode}）`,
+      hint: "启动自检失败：前端调 Rust 后端没通，错误码含义见「关于」页",
+    };
   }
   if (failure) {
     return {
-      text: `IPC 异常：${failure.command}`,
+      text: `调用失败：${failure.command}`,
       hint: `调用 ${failure.command} 失败：${failure.message}（点击清除这条记录）`,
     };
   }

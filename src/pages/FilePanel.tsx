@@ -535,41 +535,83 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       ref={panelRef}
     >
       <div className="files-bar">
-        <button type="button" className="btn btn--sm" onClick={goUp} disabled={path === "/"}>
-          ↑ 上一级
-        </button>
-        <button type="button" className="btn btn--sm" onClick={refresh} disabled={busy}>
-          刷新
-        </button>
+        {/* 导航三件套装一组：它们作用于「当前目录」，和右边创建/上传不是一类操作 */}
+        <div className="files-bar__group">
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title="上一级"
+            aria-label="上一级"
+            onClick={goUp}
+            disabled={path === "/"}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 12.6V3.6" />
+              <path d="m4.4 7.2 3.6-3.6 3.6 3.6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title="刷新"
+            aria-label="刷新"
+            onClick={refresh}
+            disabled={busy}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+              <path d="M13 2.6V5h-2.4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title={home ? `回家目录 ${home}` : "回家目录"}
+            aria-label="回家目录"
+            disabled={!home}
+            onClick={() => home && void load(sessionId, home)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 7.6 8 3l5.5 4.6" />
+              <path d="M4.1 6.6v6.5h7.8V6.6" />
+            </svg>
+          </button>
+        </div>
+
+        <span className="files-bar__divider" />
+
         <button
           type="button"
-          className="btn btn--sm"
-          title={home ? `回家目录 ${home}` : "回家目录"}
-          disabled={!home}
-          onClick={() => home && void load(sessionId, home)}
-        >
-          ~
-        </button>
-        <button
-          type="button"
-          className="btn btn--sm"
+          className="btn btn--ghost btn--sm"
           onClick={() => {
             setAction({ kind: "mkdir" });
             setDraft("");
           }}
         >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2 4.3a1 1 0 0 1 1-1h3.1l1.4 1.6H13a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+            <path d="M8 7.6v3.6M6.2 9.4h3.6" />
+          </svg>
           新建文件夹
         </button>
-        <button type="button" className="btn btn--sm" onClick={() => void upload()}>
-          上传…
+
+        {/* 上传是这个面板唯一的「主动作」，给它实心底色 */}
+        <button type="button" className="btn btn--primary btn--sm" onClick={() => void upload()}>
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 10.6V2.9" />
+            <path d="m5 5.9 3-3 3 3" />
+            <path d="M2.8 11.2v1.5a.9.9 0 0 0 .9.9h8.6a.9.9 0 0 0 .9-.9v-1.5" />
+          </svg>
+          上传
         </button>
+
         <span className="files-bar__spacer" />
         {compact ? null : (
           <span className="files-bar__home" title={`家目录 ${home}`}>
             {home}
           </span>
         )}
-        <button type="button" className="btn btn--sm" onClick={closeSession}>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={closeSession}>
           断开
         </button>
       </div>
@@ -659,7 +701,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
                   title={entry.isDir ? "双击/点击进入目录" : entry.path}
                 >
                   <span className="files-name__icon">
-                    {entry.isDir ? "📁" : entry.isSymlink ? "🔗" : "📄"}
+                    <EntryGlyph isDir={entry.isDir} isSymlink={entry.isSymlink} />
                   </span>
                   <span className="files-name__text">{entry.name}</span>
                 </button>
@@ -696,38 +738,58 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
                 ) : renaming ? (
                   <button
                     type="button"
-                    className="btn btn--sm btn--primary"
+                    className="btn btn--primary btn--sm"
                     onClick={() => void renameEntry(entry)}
                   >
                     保存
                   </button>
                 ) : (
                   <>
+                    {/* 行内操作改成图标：三个中文词常亮要吃掉 130px，而这一列
+                        在 560px 宽的面板里就是压垮文件名的那根稻草。
+                        图标有 title，和资源管理器/FileZilla 的习惯一致。 */}
                     {!entry.isDir ? (
                       <button
                         type="button"
-                        className="files-link"
+                        className="btn btn--ghost btn--icon btn--sm files-act"
+                        title="下载到本机"
+                        aria-label="下载"
                         onClick={() => void download(entry)}
                       >
-                        下载
+                        <svg viewBox="0 0 16 16" aria-hidden="true">
+                          <path d="M8 2.9v7.7" />
+                          <path d="m5 7.9 3 3 3-3" />
+                          <path d="M2.8 11.6v1.3a.9.9 0 0 0 .9.9h8.6a.9.9 0 0 0 .9-.9v-1.3" />
+                        </svg>
                       </button>
                     ) : null}
                     <button
                       type="button"
-                      className="files-link"
+                      className="btn btn--ghost btn--icon btn--sm files-act"
+                      title="重命名"
+                      aria-label="重命名"
                       onClick={() => {
                         setAction({ kind: "rename", entry });
                         setDraft(entry.name);
                       }}
                     >
-                      重命名
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M11.1 2.9a1.4 1.4 0 0 1 2 2l-7 7-2.7.7.7-2.7z" />
+                        <path d="M9.9 4.1 11.9 6.1" />
+                      </svg>
                     </button>
                     <button
                       type="button"
-                      className="files-link files-link--danger"
+                      className="btn btn--ghost btn--icon btn--sm files-act files-act--danger"
+                      title="删除"
+                      aria-label="删除"
                       onClick={() => setAction({ kind: "delete", entry })}
                     >
-                      删除
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M3 4.6h10" />
+                        <path d="M6.4 4.6V3.2h3.2v1.4" />
+                        <path d="M4.4 4.6 5 12.3a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-7.7" />
+                      </svg>
                     </button>
                   </>
                 )}
@@ -904,4 +966,34 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       </>
     );
   }
+}
+
+/**
+ * 条目类型图标。
+ *
+ * 原来这里是 📁 / 📄 / 🔗 三个 emoji：不同系统字体画出来的形状、大小、
+ * 颜色都不一样，一列 emoji 排下来比正文还抢眼，而且暗色主题下有一半是
+ * 彩色实心块。换成 16px 线性描边，颜色交给 CSS（目录用主色，其余灰阶）。
+ */
+function EntryGlyph({ isDir, isSymlink }: { isDir: boolean; isSymlink: boolean }) {
+  // 目录优先于链接：能点进去的东西，形状应该先告诉人「这里能进」
+  const shape = isDir ? (
+    <path d="M2 4.4a1 1 0 0 1 1-1h3.1l1.4 1.6H13a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+  ) : isSymlink ? (
+    <>
+      <path d="M6.7 9.3a2.5 2.5 0 0 1 0-3.6l2-1.9a2.5 2.5 0 0 1 3.5 3.5l-.8.8" />
+      <path d="M9.3 6.7a2.5 2.5 0 0 1 0 3.6l-2 1.9a2.5 2.5 0 0 1-3.5-3.5l.8-.8" />
+    </>
+  ) : (
+    <>
+      <path d="M3.4 2.4h5.1l3.5 3.5v7.1a.7.7 0 0 1-.7.7H3.4a.7.7 0 0 1-.7-.7V3.1a.7.7 0 0 1 .7-.7z" />
+      <path d="M8.4 2.6v3.4h3.5" />
+    </>
+  );
+
+  return (
+    <svg className="files-name__svg" viewBox="0 0 16 16" aria-hidden="true">
+      {shape}
+    </svg>
+  );
 }

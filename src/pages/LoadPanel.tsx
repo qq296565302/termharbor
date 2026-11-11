@@ -120,19 +120,33 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
           title={auto ? "每 3 秒自动刷新（点击暂停）" : "已暂停，点击恢复自动刷新"}
           onClick={() => setAuto((value) => !value)}
         >
-          {auto ? "自动" : "暂停"}
+          {/* 状态灯：只有「正在自动刷新」才亮，比读两个字快 */}
+          <span className="term-load__pulse" />
+          {auto ? "自动" : "已暂停"}
         </button>
         <button
           type="button"
-          className="term-load__refresh"
+          className="btn btn--ghost btn--icon btn--sm"
           title="立即刷新"
+          aria-label="立即刷新"
           disabled={!sessionId || state.loading}
           onClick={() => void refresh()}
         >
-          ↻
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+            <path d="M13 2.6V5h-2.4" />
+          </svg>
         </button>
-        <button type="button" className="term-load__close" title="关闭看板" onClick={onClose}>
-          ×
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon btn--sm term-load__close"
+          title="关闭看板"
+          aria-label="关闭看板"
+          onClick={onClose}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" />
+          </svg>
         </button>
       </div>
 
@@ -151,20 +165,21 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
         <div className="term-load__body">
           <section className="load-card">
             <header className="load-card__head">
-              <span>CPU</span>
+              <span className="load-card__name">CPU</span>
               <span className="load-card__value">{snapshot.cpu.percent.toFixed(1)}%</span>
             </header>
             <Sparkline points={history} />
             <div className="load-cores">
               {snapshot.cpu.cores.map((core, index) => (
                 <div className="load-core" key={index} title={`cpu${index} ${core.toFixed(0)}%`}>
+                  {/* 标签在条前面：反过来的话「条 | c0 」会把这一条的归属读成下一核 */}
+                  <span className="load-core__label">c{index}</span>
                   <span className="load-core__bar">
                     <span
                       className={`load-core__fill ${levelOf(core)}`}
                       style={{ width: `${clampPercent(core)}%` }}
                     />
                   </span>
-                  <span className="load-core__label">c{index}</span>
                 </div>
               ))}
               {snapshot.cpu.coresCount === 0 ? (
@@ -175,7 +190,7 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
 
           <section className="load-card">
             <header className="load-card__head">
-              <span>内存</span>
+              <span className="load-card__name">内存</span>
               <span className="load-card__value">
                 {percentText(snapshot.memory.percent)}
               </span>
@@ -209,7 +224,7 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
 
           <section className="load-card">
             <header className="load-card__head">
-              <span>负载均值</span>
+              <span className="load-card__name">负载均值</span>
               <span className="load-card__hint">
                 {snapshot.running} 个可运行 / 共 {snapshot.totalProcs} 进程
               </span>
@@ -233,7 +248,7 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
 
           <section className="load-card">
             <header className="load-card__head">
-              <span>磁盘</span>
+              <span className="load-card__name">磁盘</span>
               <span className="load-card__hint">{snapshot.disks.length} 个挂载点</span>
             </header>
             {snapshot.disks.length === 0 ? (
@@ -263,7 +278,7 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
 
           <section className="load-card">
             <header className="load-card__head">
-              <span>网络</span>
+              <span className="load-card__name">网络</span>
               <span className="load-card__hint">{(snapshot.windowMs / 1000).toFixed(1)} 秒窗口</span>
             </header>
             {snapshot.nets.length === 0 ? (
@@ -283,7 +298,7 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
 
           <section className="load-card">
             <header className="load-card__head">
-              <span>CPU 占用前 5</span>
+              <span className="load-card__name">CPU 占用前 5</span>
               <span className="load-card__hint">PID / 名称 / CPU / 内存</span>
             </header>
             {snapshot.processes.length === 0 ? (

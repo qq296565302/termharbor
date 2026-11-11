@@ -26,8 +26,8 @@ describe("ipcLabel", () => {
     expect(ipcLabel(null, null).text).toBe("IPC 就绪");
   });
 
-  it("启动探活失败时显示错误码，不是一句笼统的异常", () => {
-    expect(ipcLabel("DB_ERROR").text).toBe("DB_ERROR");
+  it("启动探活失败时给一句人话，错误码留在括号里", () => {
+    expect(ipcLabel("DB_ERROR").text).toBe("后端未就绪（DB_ERROR）");
   });
 
   it("运行期调不通时带上命令名，方便定位是哪一条", () => {
@@ -36,13 +36,13 @@ describe("ipcLabel", () => {
       message: "command sftp_list not found",
       at: 1,
     });
-    expect(label.text).toBe("IPC 异常：sftp_list");
+    expect(label.text).toBe("调用失败：sftp_list");
     expect(label.hint).toContain("sftp_list");
   });
 
   it("启动失败优先于运行期失败（说明更根本）", () => {
     expect(
       ipcLabel("STORAGE_ERROR", { command: "x", message: "y", at: 1 }).text,
-    ).toBe("STORAGE_ERROR");
+    ).toBe("后端未就绪（STORAGE_ERROR）");
   });
 });

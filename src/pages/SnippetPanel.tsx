@@ -197,39 +197,53 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
   return (
     <aside className="snip">
       <div className="snip__head">
-        <span>命令片段</span>
+        <span className="snip__title">命令片段</span>
         <span className="snip__head-spacer" />
         <button
           type="button"
-          className="snip__new"
+          className="btn btn--ghost btn--sm snip__new"
           onClick={openCreate}
           title="新建片段（部署命令可以存成一条）"
         >
-          + 新建
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 3.4v9.2M3.4 8h9.2" />
+          </svg>
+          新建
         </button>
         <button
           type="button"
-          className="snip__close"
+          className="btn btn--ghost btn--icon btn--sm snip__close"
           onClick={onClose}
           title="关闭（Ctrl+Shift+P）"
+          aria-label="关闭"
         >
-          ×
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6" />
+          </svg>
         </button>
       </div>
 
-      <input
-        ref={searchRef}
-        className="input snip__search"
-        placeholder="搜索命令 / 名称 / 分组"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            if (draft) setDraft(null);
-            else onClose();
-          }
-        }}
-      />
+      {/* 搜索框自带放大镜：侧栏里只有一个输入框，光靠 placeholder 说「搜索」，
+          滚出视口后就看不出这是筛选器还是命令输入行 */}
+      <div className="snip__searchbox">
+        <svg className="snip__searchicon" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="7.1" cy="7.1" r="4.1" />
+          <path d="m10.2 10.2 3 3" />
+        </svg>
+        <input
+          ref={searchRef}
+          className="input snip__search"
+          placeholder="搜索命令 / 名称 / 分组"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              if (draft) setDraft(null);
+              else onClose();
+            }
+          }}
+        />
+      </div>
 
       {draft ? (
         <div className="snip__form">
@@ -309,7 +323,11 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
                   setCollapsed((prev) => ({ ...prev, [group]: !isCollapsed }))
                 }
               >
-                <span className="snip__caret">{isCollapsed ? "▸" : "▾"}</span>
+                <span className={`snip__caret${isCollapsed ? " is-collapsed" : ""}`}>
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m6.2 4.2 4 3.8-4 3.8" />
+                  </svg>
+                </span>
                 <span className="snip__group-name">{group}</span>
                 <span className="snip__count">{rows.length}</span>
               </button>
@@ -353,72 +371,93 @@ export default function SnippetPanel({ onInsert, onView, onClose, sessionId }: P
 
                   <ul className="snip__items">
                     {rows.map((item) => (
-                      <li key={item.id} className="snip__item">
+                      <li
+                        key={item.id}
+                        className={`snip__item${deleting === item.id ? " is-deleting" : ""}`}
+                      >
                         <button
                           type="button"
                           className={`snip__insert is-${item.risk}`}
-                          title={item.description}
+                          title={item.description || item.command}
                           onClick={() => void insert(item)}
                         >
                           <span className="snip__name">
                             {item.name}
-                            {item.risk === "critical" ? (
-                              <span className="snip__risk is-critical">高危</span>
+                            {/* 只读片段不挂标签：一列全是「只读」等于没有标签 */}
+                            {item.risk !== "readonly" ? (
+                              <span className={`snip__risk is-${item.risk}`}>
+                                {item.risk === "critical" ? "高危" : "改动"}
+                              </span>
                             ) : null}
                           </span>
                           <code className="snip__cmd">{item.command}</code>
                         </button>
 
-                        {item.diag ? (
-                          <button
-                            type="button"
-                            className="snip__view"
-                            title="用表格查看（不占用终端）"
-                            onClick={() => onView(item.diag as DiagKind, item.name)}
-                          >
-                            表格
-                          </button>
-                        ) : null}
+                        <span className="snip__rowacts">
+                          {item.diag ? (
+                            <button
+                              type="button"
+                              className="snip__icon-btn"
+                              title="用表格查看（不占用终端）"
+                              aria-label="用表格查看"
+                              onClick={() => onView(item.diag as DiagKind, item.name)}
+                            >
+                              <svg viewBox="0 0 16 16" aria-hidden="true">
+                                <rect x="2" y="3" width="12" height="10" rx="1.6" />
+                                <path d="M2 6.6h12M6.4 6.6V13" />
+                              </svg>
+                            </button>
+                          ) : null}
 
-                        {!item.builtin ? (
-                          deleting === item.id ? (
-                            <span className="snip__confirm">
-                              <button
-                                type="button"
-                                className="snip__icon-btn is-danger"
-                                onClick={() => void remove(item.id)}
-                              >
-                                删
-                              </button>
-                              <button
-                                type="button"
-                                className="snip__icon-btn"
-                                onClick={() => setDeleting(null)}
-                              >
-                                取消
-                              </button>
-                            </span>
-                          ) : (
-                            <span className="snip__edit">
-                              <button
-                                type="button"
-                                className="snip__icon-btn"
-                                title="编辑"
-                                onClick={() => openEdit(item)}
-                              >
-                                改
-                              </button>
-                              <button
-                                type="button"
-                                className="snip__icon-btn"
-                                title="删除"
-                                onClick={() => setDeleting(item.id)}
-                              >
-                                删
-                              </button>
-                            </span>
-                          )
-                        ) : null}
+                          {!item.builtin ? (
+                            deleting === item.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="snip__icon-btn is-danger is-wide"
+                                  onClick={() => void remove(item.id)}
+                                >
+                                  删除
+                                </button>
+                                <button
+                                  type="button"
+                                  className="snip__icon-btn is-wide"
+                                  onClick={() => setDeleting(null)}
+                                >
+                                  取消
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="snip__icon-btn"
+                                  title="编辑"
+                                  aria-label="编辑"
+                                  onClick={() => openEdit(item)}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                                    <path d="M11.1 2.9a1.4 1.4 0 0 1 2 2l-7 7-2.7.7.7-2.7z" />
+                                    <path d="M9.9 4.1 11.9 6.1" />
+                                  </svg>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="snip__icon-btn"
+                                  title="删除"
+                                  aria-label="删除"
+                                  onClick={() => setDeleting(item.id)}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                                    <path d="M3 4.6h10" />
+                                    <path d="M6.4 4.6V3.2h3.2v1.4" />
+                                    <path d="M4.4 4.6 5 12.3a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-7.7" />
+                                  </svg>
+                                </button>
+                              </>
+                            )
+                          ) : null}
+                        </span>
                       </li>
                     ))}
                   </ul>
