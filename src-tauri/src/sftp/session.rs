@@ -20,6 +20,11 @@ pub struct SftpConn {
     pub session: Arc<SftpSession>,
     /// 登录后的家目录，作为文件面板的初始位置
     pub home: String,
+    /// 这条连接属于哪台服务器。
+    ///
+    /// 会话租约要按**连接 id** 汇报「客户端当前连着谁」，只拿到会话 id 没用 ——
+    /// 终端会话在 `SessionManager` 里天然带着它，SFTP 这边原来没有，补上。
+    pub connection_id: String,
     /// 只用于主动断开。取走后为 None，重复 close 是安全的。
     handle: Mutex<Option<Handle<ProbeHandler>>>,
 }
@@ -117,6 +122,21 @@ impl SftpManager {
             .cloned()
             .collect()
     }
+
+    /// 当前打开着的 SFTP 连接对应的**连接 id**（去重）。
+    /// 会话租约用它，和终端的 `SessionManager::list()` 合在一起算「此刻连着谁」。
+    pub fn connection_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self
+            .conns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .map(|conn| conn.connection_id.clone())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
 }
 
 /// 建立一条 SFTP 连接。
@@ -125,6 +145,7 @@ impl SftpManager {
 /// 只有最后一步不同：开 `sftp` 子系统而不是 PTY。
 pub async fn open(
     session_id: String,
+    connection_id: String,
     probe: ProbeRequest,
 ) -> AppResult<(OpenedSftp, Arc<SftpConn>)> {
     let established = establish(&probe, Purpose::Session)
@@ -171,6 +192,7 @@ pub async fn open(
     let conn = Arc::new(SftpConn {
         session: Arc::new(session),
         home: home.clone(),
+        connection_id,
         handle: Mutex::new(Some(handle)),
     });
 
@@ -263,7 +285,7 @@ mod tests {
         let mut request = probe_req(port);
         request.trust_fingerprint = Some(fingerprint);
 
-        let (opened, conn) = open("test".to_string(), request)
+        let (opened, conn) = open("test".to_string(), "c1".to_string(), request)
             .await
             .expect("SFTP 会话应当能建立");
         assert_eq!(opened.home, "/");

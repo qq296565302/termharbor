@@ -306,6 +306,12 @@ export interface McpConnectionPolicy {
 export interface McpConfig {
   version: number;
   defaultEnabled: boolean;
+  /**
+   * 只允许使用「客户端此刻连着」的服务器。默认开。
+   *
+   * 关掉它就退回 0.1.26 的行为（客户端不运行也能用），只适合无人值守场景。
+   */
+  requireLiveSession: boolean;
   connections: Record<string, McpConnectionPolicy>;
 }
 

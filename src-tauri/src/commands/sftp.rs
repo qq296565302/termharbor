@@ -39,13 +39,21 @@ pub async fn sftp_open(
     connection_id: String,
     trust_fingerprint: Option<String>,
 ) -> AppResult<SftpOpened> {
-    let prepared =
-        prepare_probe(state.inner(), Some(connection_id), None, trust_fingerprint).await?;
+    let prepared = prepare_probe(
+        state.inner(),
+        Some(connection_id.clone()),
+        None,
+        trust_fingerprint,
+    )
+    .await?;
     let host_label = prepared.host_label.clone();
     let session_id = format!("f{}", state.next_session_seq());
 
-    let (opened, conn) = session::open(session_id.clone(), prepared.request).await?;
+    let (opened, conn) = session::open(session_id.clone(), connection_id, prepared.request).await?;
     state.sftp.insert(session_id.clone(), conn);
+    // 立刻续一次租约：用户刚点开文件面板，智能体应当马上能用，
+    // 不能等下一次心跳（最多 5 秒的空窗会被当成「没连上」）。
+    crate::lease::publish(state.inner());
 
     if let Some((algo, fingerprint)) = opened.newly_trusted {
         let record = KnownHostRecord {
@@ -78,6 +86,8 @@ pub async fn sftp_close(state: State<'_, AppState>, session_id: String) -> AppRe
         conn.close().await;
         tracing::info!(session = %session_id, "SFTP 会话已关闭");
     }
+    // 断开即失效：智能体不该在用户关掉面板之后还能用这台机器。
+    crate::lease::publish(state.inner());
 
     Ok(())
 }
@@ -96,6 +106,7 @@ pub async fn sftp_close_all(state: State<'_, AppState>) -> AppResult<usize> {
     }
 
     let closed = state.sftp.close_all().await;
+    crate::lease::publish(state.inner());
 
     if closed > 0 {
         tracing::info!(count = closed, "清理残留 SFTP 会话");

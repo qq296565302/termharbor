@@ -68,6 +68,13 @@ fn default_timeout() -> u64 {
 fn default_output() -> usize {
     DEFAULT_MAX_OUTPUT_KB
 }
+/// 在线会话校验默认**开**。
+///
+/// 老配置里没有这个字段，按 `default` 读出来必须是开 —— 这是安全默认：
+/// 反过来（默认关）等于升级后悄悄放开了「客户端关了也能连」。
+fn default_require_live_session() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -77,6 +84,13 @@ pub struct McpConfig {
     /// 没有显式列出的连接一律不可见。这个字段保留给「批量开启」场景，默认 false。
     #[serde(default)]
     pub default_enabled: bool,
+    /// 只有客户端里**当前连着**的服务器才允许智能体使用。
+    ///
+    /// 这是运行时的闸门，和 `enabled`（长期授权）是两件事：`enabled` 说的是
+    /// 「这台机器可以交给 agent」，本字段说的是「此刻还连着才算数」。
+    /// 关掉它就退回 0.1.26 的行为（客户端完全退出也能用），用于无人值守场景。
+    #[serde(default = "default_require_live_session")]
+    pub require_live_session: bool,
     /// key 可以是连接 id，也可以是连接名称。
     #[serde(default)]
     pub connections: BTreeMap<String, ConnectionPolicy>,
@@ -87,6 +101,7 @@ impl Default for McpConfig {
         Self {
             version: 1,
             default_enabled: false,
+            require_live_session: default_require_live_session(),
             connections: BTreeMap::new(),
         }
     }

@@ -3916,6 +3916,60 @@ a:focus-visible,
   gap: 8px;
 }
 
+/* 在线会话校验：一个开关 + 一行解释。这句解释是这个功能唯一的说明书 ——
+   用户看到智能体「莫名其妙不干活」时就靠它定位。 */
+.mcp__gate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+}
+
+.mcp__gate-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mcp__gate-state {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mcp__gate-state.is-off {
+  border-style: dashed;
+  color: var(--warn);
+}
+
+.mcp__gate-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+/* 复选框统一用主题色。原生蓝色勾在青绿色系里像另一个应用的东西。 */
+.mcp__head input[type="checkbox"],
+.mcp__tool input[type="checkbox"],
+.mcp__gate input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .mcp__card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -3939,6 +3993,31 @@ a:focus-visible,
 .mcp__name {
   font-size: 12.5px;
   color: var(--text);
+}
+
+/* 在线点：字和点一起变，色弱也读得出来 */
+.mcp__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: 10.5px;
+}
+
+.mcp__live-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.mcp__live.is-on {
+  color: var(--ok);
+}
+
+.mcp__live.is-on .mcp__live-dot {
+  opacity: 1;
 }
 
 .mcp__host {
@@ -4171,19 +4250,10 @@ a:focus-visible,
   color: var(--text-faint);
 }
 
+/* 「全部开放」这类嵌入正文的动作，直接复用 .btn 体系；这里只管换行对齐 */
 .mcp__quick {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.mcp__quick button {
-  padding: 3px 8px;
-  border: 1px solid var(--accent);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--accent);
-  font-size: 11px;
-  cursor: pointer;
 }

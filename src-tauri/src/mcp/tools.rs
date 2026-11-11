@@ -22,7 +22,7 @@ use super::config::{
     TOOL_SFTP_RENAME, TOOL_SFTP_UPLOAD, TOOL_SFTP_WRITE,
 };
 use super::context::Context;
-use super::exec::{validate_command, DenyReason};
+use super::exec::{validate_command, DenyReason, Liveness};
 use super::jsonrpc::{RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::error::{AppError, ErrCode};
 use crate::monitor::load::LoadSnapshot;
@@ -64,7 +64,9 @@ pub fn list() -> Vec<ToolInfo> {
             name: TOOL_LIST_CONNECTIONS,
             description: "列出已对 MCP 启用的服务器连接。只返回名称、主机、端口、用户名、\
                           认证方式，不含任何密码、私钥或主机指纹。\
-                          只是「已保存的连接」，不检测是否在线、也不代表能登录成功。",
+                          `usable` 表示**现在**能不能真的调工具：只有用户正在客户端里连着\
+                          这台机器时才为 true，其余情况下其它工具都会被拒绝（no_live_session）。\
+                          它不代表能登录成功 —— 凭据可能已经失效。",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -369,6 +371,12 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
              请让用户在「设置 → MCP 接入 → 这台机器的细化权限 → 可见目录」\
              里加上它的目录前缀，或者把列表清空（清空 = 不限路径）。",
         )),
+        // 「关掉连接就不许再用」是用户的明确要求。三种情形要分开说，
+        // 否则模型会把「客户端没开」当成「权限没配」去翻设置。
+        Outcome::Denied {
+            reason: DenyReason::NoLiveSession(why),
+            ..
+        } => Ok(failed(no_live_session(why))),
         Outcome::Denied { reason, .. } => Ok(failed(format!(
             "已被本地配置拒绝（{}）。这台机器或这个工具没有对 MCP 开放。\
              请让用户在「设置 → MCP 接入」里放开；不要尝试改用别的方式达到同样目的。",
@@ -388,8 +396,13 @@ fn denied_entry(
     super::audit::AuditEntry::denied(tool, connection, args, client, reason)
 }
 
-/// 连接启用 + 工具允许，两道闸门一起过。
+/// 连接启用 + 工具允许 + 此刻确实连着，三道闸门一起过。
+///
+/// 第三道是 0.2.1 加的：用户关掉连接就该轮到智能体停手。它是**运行时**判定，
+/// 每次调用都读一次租约文件（几百字节），不做缓存 —— 缓存会让"刚关掉又用上了"
+/// 这种最需要它生效的场景失效。
 fn gated(
+    ctx: &Context,
     cfg: &McpConfig,
     record: &ConnectionRecord,
     tool: &str,
@@ -403,7 +416,17 @@ fn gated(
     if !cfg.allows_tool(policy, tool) {
         return Err(DenyReason::ToolNotAllowed);
     }
-    Ok(policy.clone())
+    if !ctx.enforces_lease() || !cfg.require_live_session {
+        return Ok(policy.clone());
+    }
+    match crate::lease::check(&ctx.paths().product_dir, &record.id, now_millis()) {
+        Ok(()) => Ok(policy.clone()),
+        Err(crate::lease::Miss::NotRunning) => Err(DenyReason::NoLiveSession(Liveness::NotRunning)),
+        Err(crate::lease::Miss::Expired) => Err(DenyReason::NoLiveSession(Liveness::Expired)),
+        Err(crate::lease::Miss::NotConnected) => {
+            Err(DenyReason::NoLiveSession(Liveness::NotConnected))
+        }
+    }
 }
 
 /// 单个远端路径的闸门：先看 `paths` 收窄，再看凭据类文件。
@@ -423,6 +446,17 @@ fn path_gate(policy: &ConnectionPolicy, path: &str) -> Result<(), DenyReason> {
 
 async fn list_connections(ctx: &Context) -> Result<Outcome, RpcError> {
     let cfg = ctx.config().load();
+    // 在线会话校验关掉时，「能不能用」只取决于长期授权 —— 这时 everything.enabled 都 usable。
+    let gate_active = ctx.enforces_lease() && cfg.require_live_session;
+    let open: Vec<String> = if gate_active {
+        match crate::lease::status(&ctx.paths().product_dir, now_millis()) {
+            crate::lease::Status::Live(ids) => ids,
+            _ => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+
     match load_connections(ctx).await {
         Ok(rows) => {
             // 只挑能给的字段；而且只列**已启用**的连接 —— 没开的连接对 MCP 不存在。
@@ -437,6 +471,9 @@ async fn list_connections(ctx: &Context) -> Result<Outcome, RpcError> {
                         "username": record.username,
                         "authType": record.auth_type.as_str(),
                         "lastUsedAt": record.last_used_at,
+                        // usable = 现在调工具能不能成。false 只有一个原因：
+                        // 这台机器没在客户端里连着（用户关了连接，或客户端没开）。
+                        "usable": !gate_active || open.iter().any(|id| id == &record.id),
                     })
                 })
                 .collect();
@@ -467,7 +504,7 @@ async fn sftp_list(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, 
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_LIST) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_LIST) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -538,7 +575,7 @@ async fn open_sftp(
         crate::commands::connections::prepare_probe(&state, Some(id.to_string()), None, None)
             .await?;
     let (_opened, conn) =
-        crate::sftp::session::open(ctx.next_session_id(), prepared.request).await?;
+        crate::sftp::session::open(ctx.next_session_id(), id.to_string(), prepared.request).await?;
     Ok(conn)
 }
 
@@ -561,7 +598,7 @@ async fn sftp_read(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome, 
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_READ) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_READ) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -671,7 +708,7 @@ async fn sftp_write(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_WRITE) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_WRITE) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -729,7 +766,7 @@ async fn sftp_upload(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_UPLOAD) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_UPLOAD) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -791,7 +828,7 @@ async fn sftp_download(ctx: &Context, arguments: Option<&Value>) -> Result<Outco
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_DOWNLOAD) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_DOWNLOAD) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -867,7 +904,7 @@ async fn sftp_mkdir(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_MKDIR) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_MKDIR) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -908,7 +945,7 @@ async fn sftp_rename(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
 
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_SFTP_RENAME) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_SFTP_RENAME) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -946,7 +983,7 @@ async fn load_snapshot(ctx: &Context, arguments: Option<&Value>) -> Result<Outco
     let spec = required_str(&args, "connection")?;
     let record = resolve_record(ctx, &spec).await?;
     let cfg = ctx.config().load();
-    if let Err(reason) = gated(&cfg, &record, TOOL_LOAD_SNAPSHOT) {
+    if let Err(reason) = gated(ctx, &cfg, &record, TOOL_LOAD_SNAPSHOT) {
         return Ok(denied(&record, reason));
     }
 
@@ -983,7 +1020,7 @@ async fn exec_command(ctx: &Context, arguments: Option<&Value>) -> Result<Outcom
     let record = resolve_record(ctx, &spec).await?;
 
     let cfg = ctx.config().load();
-    let policy = match gated(&cfg, &record, TOOL_EXEC) {
+    let policy = match gated(ctx, &cfg, &record, TOOL_EXEC) {
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
@@ -1114,6 +1151,35 @@ fn failed(message: impl Into<String>) -> Value {
     })
 }
 
+/// 「此刻没连着」的三种情形各说一句人话。
+///
+/// 共同点必须讲清楚：**这不是权限没开**，用户去设置里翻也找不到开关 ——
+/// 唯一的动作是「连上那台机器」。反过来，真要长期放开也得用户自己决定，
+/// 不能让模型去改配置。
+fn no_live_session(why: Liveness) -> String {
+    let head = match why {
+        Liveness::NotRunning => {
+            "TermHarbor 客户端没有在运行，所以这台服务器现在用不了（no_live_session）。"
+        }
+        Liveness::Expired => {
+            "TermHarbor 客户端的心跳已经停了（进程被关掉，或者从休眠里没醒过来），\
+             所以这台服务器现在用不了（no_live_session）。"
+        }
+        Liveness::NotConnected => {
+            "这台服务器当前没有打开的连接（no_live_session）—— 用户把连接关掉了。"
+        }
+    };
+    format!(
+        "{head}\n\
+         这台机器的使用前提是「客户端开着、并且此刻正连着它」，这是用户设定的在线校验，\
+         不是权限没开，设置里不需要再勾任何东西。\n\
+         该做的：请用户打开 TermHarbor 并连上这台服务器（终端或文件面板任一个），然后重试。\
+         在此之前不要反复重试，也不要改用别的工具绕过这个限制。\n\
+         如果用户本来就希望关掉客户端也能用，那是「设置 → MCP 接入 → 只允许使用当前已连接的服务器」\
+         这个开关，由用户自己决定，你不要去改配置。"
+    )
+}
+
 /// 后端失败时把"下一步该做什么"一起给出去。
 fn backend_failure(err: &AppError) -> Value {
     let mut message = describe(err);
@@ -1139,6 +1205,7 @@ fn describe(err: &AppError) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::connections::AuthType;
 
     fn open_policy() -> ConnectionPolicy {
         ConnectionPolicy {
@@ -1282,7 +1349,97 @@ mod tests {
             .into_iter()
             .find(|t| t.name == "list_connections")
             .unwrap();
-        assert!(tool.description.contains("不检测是否在线"));
+        // 0.2.1 起多了 usable，但「usable=true 也不保证能登录」这句必须留着，
+        // 否则模型会把 usable 当成「连得上」去断言服务器在线。
+        assert!(tool.description.contains("usable"));
+        assert!(tool.description.contains("不代表能登录成功"));
+        assert!(tool.description.contains("no_live_session"));
+    }
+
+    /// 在线会话校验的测试环境：一条已启用的连接 `c1`。
+    fn lease_ctx() -> (Context, ConnectionRecord) {
+        let dir = crate::ssh::test_support::unique_path("mcp-lease");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+
+        let ctx = Context::for_tests(dir).with_lease(true);
+        let mut cfg = McpConfig::default();
+        cfg.connections.insert(
+            "c1".into(),
+            ConnectionPolicy {
+                enabled: true,
+                ..Default::default()
+            },
+        );
+        ctx.config().save(&cfg).expect("写 mcp.json");
+
+        let mut record = ConnectionRecord::new("web", "127.0.0.1", 22, "root", AuthType::Password);
+        record.id = "c1".into();
+        (ctx, record)
+    }
+
+    fn gate(ctx: &Context, record: &ConnectionRecord) -> Result<ConnectionPolicy, DenyReason> {
+        gated(ctx, &ctx.config().load(), record, TOOL_EXEC)
+    }
+
+    /// 客户端没运行（没有租约文件）时，联网工具一律拒绝 —— 这就是用户
+    /// 「关掉客户端它还能连」那个问题的直接修复。
+    #[test]
+    fn gate_rejects_when_client_is_not_running() {
+        let (ctx, record) = lease_ctx();
+        assert!(matches!(
+            gate(&ctx, &record),
+            Err(DenyReason::NoLiveSession(Liveness::NotRunning))
+        ));
+    }
+
+    /// 客户端在跑、但这台机器没连 —— 也是拒绝。
+    #[test]
+    fn gate_rejects_connection_that_is_not_open() {
+        let (ctx, record) = lease_ctx();
+        crate::lease::write(&ctx.paths().product_dir, &["another".to_string()]).expect("写租约");
+        assert!(matches!(
+            gate(&ctx, &record),
+            Err(DenyReason::NoLiveSession(Liveness::NotConnected))
+        ));
+    }
+
+    /// 连着的能过。
+    #[test]
+    fn gate_allows_open_connection() {
+        let (ctx, record) = lease_ctx();
+        crate::lease::write(&ctx.paths().product_dir, &["c1".to_string()]).expect("写租约");
+        assert!(gate(&ctx, &record).is_ok());
+    }
+
+    /// 心跳过期（进程被强杀）同样拒绝。
+    #[test]
+    fn gate_rejects_stale_heartbeat() {
+        let (ctx, record) = lease_ctx();
+        // 直接把租约写成「很久以前的心跳」：绕过 write()，它总会写当前时间
+        let path = crate::lease::path(&ctx.paths().product_dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = serde_json::json!({
+            "version": 1,
+            "pid": 1,
+            "beatMs": 0,
+            "connections": ["c1"],
+        });
+        std::fs::write(&path, serde_json::to_vec(&stale).unwrap()).unwrap();
+
+        assert!(matches!(
+            gate(&ctx, &record),
+            Err(DenyReason::NoLiveSession(Liveness::Expired))
+        ));
+    }
+
+    /// 用户在设置里关掉校验 → 退回旧行为（客户端不运行也能用）。
+    #[test]
+    fn config_switch_turns_the_gate_off() {
+        let (ctx, record) = lease_ctx();
+        let mut cfg = ctx.config().load();
+        cfg.require_live_session = false;
+        assert!(gated(&ctx, &cfg, &record, TOOL_EXEC).is_ok());
     }
 
     #[test]

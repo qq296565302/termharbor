@@ -92,6 +92,24 @@ pub fn mcp_audit_recent(state: State<'_, AppState>) -> Vec<AuditEntry> {
     AuditLog::new(&crate::mcp::data_dir(&state.paths.product_dir)).recent_denied(20)
 }
 
+/// 此刻在客户端里打开着的连接 id（终端会话 + 文件面板，去重）。
+///
+/// 设置页拿它给每台机器打「已连接」的绿点。「关了连接智能体就用不了」这条规则
+/// 如果界面上看不出来，用户只会觉得智能体莫名其妙不干活。
+#[tauri::command]
+pub fn mcp_live_connections(state: State<'_, AppState>) -> Vec<String> {
+    let mut ids: Vec<String> = state
+        .sessions
+        .list()
+        .into_iter()
+        .map(|info| info.connection_id)
+        .collect();
+    ids.extend(state.sftp.connection_ids());
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 /// 把一条被拒的命令加进白名单。
 ///
 /// 只做这一件事：加命令 + 确保 `exec` 工具开着。不会顺手启用连接、不会放开路径，

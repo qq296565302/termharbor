@@ -35,6 +35,11 @@ pub struct Context {
     audit: AuditLog,
     /// 宿主 initialize 时自报的名字。**只用于记录，绝不参与放行判断**。
     client: Mutex<String>,
+    /// 是否执行「在线会话校验」。生产恒为 true（租约文件不存在即视为不可用）。
+    ///
+    /// 测试里默认关掉：不然每个要连服务器的用例都得先伪造一份租约文件。
+    /// 需要专门验证闸门的用例用 [`Context::with_lease`] 打开。
+    enforce_lease: bool,
 }
 
 impl Context {
@@ -51,6 +56,7 @@ impl Context {
             config,
             audit,
             client: Mutex::new("unknown".into()),
+            enforce_lease: true,
         })
     }
 
@@ -71,7 +77,21 @@ impl Context {
             config,
             audit,
             client: Mutex::new("unknown".into()),
+            // 测试默认不查租约：每个用例都要先伪造文件才连得上，噪音太大。
+            enforce_lease: false,
         }
+    }
+
+    /// 打开在线会话校验，供专门验证这道闸门的用例使用。
+    #[cfg(test)]
+    pub fn with_lease(mut self, on: bool) -> Self {
+        self.enforce_lease = on;
+        self
+    }
+
+    /// 生产环境恒为 true，见字段注释。
+    pub fn enforces_lease(&self) -> bool {
+        self.enforce_lease
     }
 
     pub fn paths(&self) -> &AppPaths {

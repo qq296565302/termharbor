@@ -71,6 +71,10 @@ pub async fn session_open(
         tracing::info!(host = %prepared.host_label, fp = %fingerprint, "已记录新主机指纹");
     }
 
+    // 会话建成后立刻续租约：用户刚连上，智能体就该马上能用，
+    // 不用等下一次心跳（那会有最多 5 秒的空窗）。
+    crate::lease::publish(state.inner());
+
     Ok(opened.info)
 }
 
@@ -101,6 +105,8 @@ pub async fn session_resize(
 #[tauri::command]
 pub async fn session_close(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
     state.sessions.close(&session_id);
+    // 断开即失效：用户关掉终端标签之后，这台机器就不该再让智能体用。
+    crate::lease::publish(state.inner());
     Ok(())
 }
 
@@ -110,7 +116,9 @@ pub async fn session_close(state: State<'_, AppState>, session_id: String) -> Ap
 /// 不清理的话，每次重载都在服务器上留一个没人用的 shell。
 #[tauri::command]
 pub async fn session_close_all(state: State<'_, AppState>) -> AppResult<usize> {
-    Ok(state.sessions.close_all())
+    let closed = state.sessions.close_all();
+    crate::lease::publish(state.inner());
+    Ok(closed)
 }
 
 /// 前端消费完一段输出后回调，用于解除背压。

@@ -13,12 +13,15 @@ import { createRoot } from "react-dom/client";
 import DiagPanel from "../pages/DiagPanel";
 import FilePanel from "../pages/FilePanel";
 import LoadPanel from "../pages/LoadPanel";
+import McpSettings from "../pages/McpSettings";
 import SnippetPanel from "../pages/SnippetPanel";
 import "../styles.css";
 import type {
   DiagResult,
   EnvStatus,
   LoadSnapshot,
+  McpAuditEntry,
+  McpConfigView,
   RemoteEntry,
   SnippetDto,
 } from "../lib/types";
@@ -130,6 +133,95 @@ const responses: Record<string, unknown> = {
   load_snapshot: load,
 };
 
+/* ---------------------------------------------------------------- MCP 设置页 */
+
+const mcpView: McpConfigView = {
+  config: {
+    version: 1,
+    defaultEnabled: false,
+    requireLiveSession: true,
+    connections: {
+      c1: {
+        enabled: true,
+        tools: [],
+        paths: [],
+        allowSecretFiles: false,
+        exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
+      },
+      c2: {
+        enabled: true,
+        tools: ["sftp_list", "exec"],
+        paths: ["/var/log"],
+        allowSecretFiles: false,
+        exec: { allow: ["df -h", "journalctl -n 50"], timeoutSecs: 60, maxOutputKb: 64 },
+      },
+      c3: {
+        enabled: false,
+        tools: [],
+        paths: [],
+        allowSecretFiles: false,
+        exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
+      },
+    },
+  },
+  connections: [
+    { id: "c1", name: "prod-web-01", host: "10.0.0.11", port: 22 },
+    { id: "c2", name: "prod-db-01", host: "10.0.0.21", port: 22 },
+    { id: "c3", name: "staging", host: "10.0.0.31", port: 2222 },
+  ],
+  commandTemplates: ["df -h", "free -m", "uptime", "docker ps"],
+  configPath: "%APPDATA%\\TermHarbor\\mcp.json",
+  auditPath: "%APPDATA%\\TermHarbor\\audit.jsonl",
+};
+
+const mcpDenied: McpAuditEntry[] = [
+  {
+    tsMs: now - 40_000,
+    client: "claude-ai",
+    tool: "exec",
+    connection: "prod-db-01",
+    args: "mysql -p*** -e 'show databases'",
+    decision: "denied",
+    reason: "command_not_allowed",
+    durationMs: 0,
+    bytes: 0,
+    result: "",
+  },
+  {
+    tsMs: now - 120_000,
+    client: "claude-ai",
+    tool: "sftp_read",
+    connection: "prod-web-01",
+    args: "/root/.ssh/id_rsa",
+    decision: "denied",
+    reason: "secret_path",
+    durationMs: 0,
+    bytes: 0,
+    result: "",
+  },
+  {
+    // 不带 *** 的一条：验证「允许这条」按钮长什么样
+    tsMs: now - 200_000,
+    client: "claude-ai",
+    tool: "exec",
+    connection: "prod-db-01",
+    args: "systemctl status mysql",
+    decision: "denied",
+    reason: "command_not_allowed",
+    durationMs: 0,
+    bytes: 0,
+    result: "",
+  },
+];
+
+Object.assign(responses, {
+  mcp_config_get: mcpView,
+  mcp_audit_recent: mcpDenied,
+  // 只有 c1 在线：另一台显示「未连接」，一眼看出这道闸门在起作用
+  mcp_live_connections: ["c1"],
+  mcp_config_set: null,
+});
+
 interface Internals {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transformCallback: (cb: unknown) => number;
@@ -167,6 +259,14 @@ function Preview() {
         onRefresh={() => undefined}
         onClose={() => undefined}
       />
+    );
+  }
+
+  if (panel === "mcp") {
+    return (
+      <div className="settings-page" style={{ height: "100vh", overflowY: "auto", padding: 24 }}>
+        <McpSettings />
+      </div>
     );
   }
 

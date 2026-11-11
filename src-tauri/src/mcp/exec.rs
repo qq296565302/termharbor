@@ -118,6 +118,20 @@ pub enum DenyReason {
     EmptyCommand,
     CompoundCommand,
     CommandNotAllowed,
+    /// 这台机器此刻没有打开的连接（在线会话校验）
+    NoLiveSession(Liveness),
+}
+
+/// 「没在线」的三种情形。给模型看的文案要分开，否则它会以为是权限没开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Liveness {
+    /// 客户端没在运行（没启动过，或已正常退出）
+    NotRunning,
+    /// 客户端进程还在，但心跳停了：被杀、或者从休眠里没醒过来
+    Expired,
+    /// 客户端在跑，但这台机器当前没有打开的连接
+    NotConnected,
 }
 
 impl DenyReason {
@@ -130,6 +144,9 @@ impl DenyReason {
             DenyReason::EmptyCommand => "empty_command",
             DenyReason::CompoundCommand => "compound_command",
             DenyReason::CommandNotAllowed => "command_not_allowed",
+            // 三种情形共用一个审计原因：它们对"能不能用"的结论一样，
+            // 区别只写在给模型的文案里。
+            DenyReason::NoLiveSession(_) => "no_live_session",
         }
     }
 }

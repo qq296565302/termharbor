@@ -84,6 +84,8 @@ export default function McpSettings() {
   const [configPath, setConfigPath] = useState("");
   const [auditPath, setAuditPath] = useState("");
   const [denied, setDenied] = useState<McpAuditEntry[]>([]);
+  /** 客户端此刻连着的连接 id。在线校验靠它给每台机器打点。 */
+  const [live, setLive] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(true);
   const [draftPath, setDraftPath] = useState<Record<string, string>>({});
@@ -95,9 +97,10 @@ export default function McpSettings() {
   const load = useCallback(async () => {
     loaded.current = false;
     try {
-      const [view, recent] = await Promise.all([
+      const [view, recent, opened] = await Promise.all([
         call<McpConfigView>("mcp_config_get"),
         call<McpAuditEntry[]>("mcp_audit_recent"),
+        call<string[]>("mcp_live_connections"),
       ]);
       setConfig(normalize(view));
       setConnections(view.connections);
@@ -105,6 +108,7 @@ export default function McpSettings() {
       setConfigPath(view.configPath);
       setAuditPath(view.auditPath);
       setDenied(recent.filter((item) => item.reason !== "invalid_params"));
+      setLive(opened);
       setError(null);
       // 加载本身不算改动，别触发一次无意义的写回
       requestAnimationFrame(() => {
@@ -118,6 +122,19 @@ export default function McpSettings() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 在线状态每 3 秒刷一次。这个页面开着的时候，用户往往就在另一个标签页里
+  // 连/断连接；不刷新的话「明明连着却显示未连接」，比不显示更让人怀疑功能坏了。
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      call<string[]>("mcp_live_connections")
+        .then(setLive)
+        .catch(() => {
+          // 纯只读状态，失败就保留上一次的值，不打扰用户
+        });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // 改动后 400ms 自动写回。不设「保存」按钮：改了就该生效。
   useEffect(() => {
@@ -223,10 +240,35 @@ export default function McpSettings() {
         <span className="settings__path">{configPath}</span>
       </p>
 
+      {config ? (
+        <div className="mcp__gate">
+          <label className="mcp__gate-switch">
+            <input
+              type="checkbox"
+              checked={config.requireLiveSession}
+              onChange={(event) =>
+                setConfig((current) =>
+                  current ? { ...current, requireLiveSession: event.target.checked } : current,
+                )
+              }
+            />
+            只允许使用当前已连接的服务器
+          </label>
+          <span className={`mcp__gate-state${config.requireLiveSession ? "" : " is-off"}`}>
+            {config.requireLiveSession ? `${live.length} 台在线` : "已关闭"}
+          </span>
+          <p className="mcp__gate-hint">
+            {config.requireLiveSession
+              ? "智能体看得到连接列表，但只有你在客户端里连着的机器才动得了。关掉连接、或者退出客户端之后立即失效，直到你下次重连。"
+              : "已关闭：客户端不运行时智能体照样能连服务器。只有没人值守的自动化才需要这样。"}
+          </p>
+        </div>
+      ) : null}
+
       {config && enabledCount === 0 && connections.length > 0 ? (
         <p className="settings__notice mcp__quick">
           当前所有连接都未开放，智能体还看不到任何服务器。
-          <button type="button" onClick={quickStart}>
+          <button type="button" className="btn btn--small" onClick={quickStart}>
             全部开放
           </button>
           之后可在每台机器上单独收窄范围。
@@ -251,6 +293,19 @@ export default function McpSettings() {
                       onChange={(event) => patch(item.id, { enabled: event.target.checked })}
                     />
                     <span className="mcp__name">{item.name}</span>
+                    {config.requireLiveSession && policy.enabled ? (
+                      <span
+                        className={`mcp__live${live.includes(item.id) ? " is-on" : ""}`}
+                        title={
+                          live.includes(item.id)
+                            ? "客户端此刻连着这台机器，智能体可以用"
+                            : "客户端此刻没连这台机器，智能体调工具会被拒绝（no_live_session）"
+                        }
+                      >
+                        <span className="mcp__live-dot" />
+                        {live.includes(item.id) ? "已连接" : "未连接"}
+                      </span>
+                    ) : null}
                     <span className="mcp__host">
                       {item.host}:{item.port}
                     </span>
@@ -495,7 +550,11 @@ export default function McpSettings() {
               <code className="mcp__denied-cmd">{entry.args || entry.tool}</code>
               <span className="mcp__denied-reason">{entry.reason}</span>
               {entry.reason === "command_not_allowed" && !entry.args.includes("***") ? (
-                <button type="button" onClick={() => void allowDenied(entry)}>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  onClick={() => void allowDenied(entry)}
+                >
                   允许这条
                 </button>
               ) : null}
@@ -508,10 +567,10 @@ export default function McpSettings() {
       ) : null}
 
       <div className="mcp__foot">
-        <button type="button" onClick={() => void copyHostConfig()}>
+        <button type="button" className="btn btn--small" onClick={() => void copyHostConfig()}>
           复制宿主配置
         </button>
-        <button type="button" onClick={() => void load()}>
+        <button type="button" className="btn btn--ghost btn--small" onClick={() => void load()}>
           刷新
         </button>
         <span className="settings__path">{auditPath}</span>

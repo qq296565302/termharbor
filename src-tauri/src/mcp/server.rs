@@ -19,7 +19,9 @@ pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-0
 const INSTRUCTIONS: &str = "TermHarbor 终端港：通过本机已保存的连接操作服务器。\
 **可用范围由用户对每台机器单独设定**：没勾的连接看不到；\
 勾了的连接默认可用全部工具，用户也可以再收窄到某些工具/目录/命令。\
-先调用 list_connections 看有哪些连接可用，然后按需使用：\
+**还有一道在线校验（设置里的「只允许使用当前已连接的服务器」）**：只有用户此刻在客户端里连着这台机器时工具才可用 —— \
+用户关掉连接、或者关掉客户端之后，其它工具会返回 no_live_session，这是用户设定的规则，不是故障。\
+先调用 list_connections 看有哪些连接可用（usable 为 true 的现在就能用），然后按需使用：\
 sftp_list 列目录、sftp_read 读文本、sftp_write 写文本、\
 sftp_upload 与 sftp_download 和本机互传文件、sftp_mkdir 建目录、sftp_rename 改名移动、\
 load_snapshot 看负载、exec 执行命令。\
@@ -27,15 +29,19 @@ load_snapshot 看负载、exec 执行命令。\
 \
 纪律（很重要）：\
 1. 只用本服务的工具操作。不要启动图形界面、不要自己扫描端口、不要让用户去界面里手动点按钮。\
-2. list_connections 只是「已保存的连接」，不表示在线，也不表示能登录成功；不要据此断言在线状态。\
+2. list_connections 只列「已保存的连接」。usable=false 表示用户现在没连它，\
+   这时调其它工具会被 no_live_session 拒绝 —— 请让用户先连上，不要换工具硬试。\
+   usable=true 也不保证能登录成功（凭据可能已失效）。\
 3. exec 只接受单条命令。需要多步就分多次调用，不要试图用 ; 管道 重定向 $() 串起来 —— 这类命令会被拒绝。\
    但**参数里的特殊字符不算**：用引号包住就是字面量，例如 curl 'http://h/?a=1&b=2'、\
    awk '{print $1}' 都是合法单条命令，可以正常用。\
    装包、部署这种多步操作，更好的做法是让用户放一个脚本，然后只调用那个脚本。\
 4. 被拒绝时先看清 reason：**compound_command 是命令写法问题**，设置里没有对应开关，\
-   按提示改写命令重试一次即可，不要让用户去改配置；其余（connection_disabled / \
-   tool_not_allowed / command_not_allowed / path_not_allowed / secret_path）才是权限没开，\
-   把原因原样转告用户，让用户去「设置 → MCP 接入」调整。任何情况下都不要用别的工具或拼命令绕过。\
+   按提示改写命令重试一次即可，不要让用户去改配置；**no_live_session 是「没连着」**，\
+   让用户在客户端里连上这台机器（或打开它的文件面板）即可，也不要让用户去改配置；\
+   其余（connection_disabled / tool_not_allowed / command_not_allowed / path_not_allowed / \
+   secret_path）才是权限没开，把原因原样转告用户，让用户去「设置 → MCP 接入」调整。\
+   任何情况下都不要用别的工具或拼命令绕过。\
 5. 工具报错时，把错误原文和它给的处理建议原样转告用户并停下，不要自行改用别的方式重试。\
 6. 写文件、上传、重命名会改变服务器状态。动手前确认目标路径；\
    要覆盖已有文件时先 sftp_read 看看原来是什么，不要盲写。";
@@ -188,7 +194,9 @@ mod tests {
 
         assert!(text.contains("不要启动图形界面"), "{text}");
         assert!(text.contains("不要自己扫描端口"), "{text}");
-        assert!(text.contains("不表示在线"), "{text}");
+        // usable 说的是「现在能不能调工具」，不是「服务器在线」，这个区别要写在开场白里
+        assert!(text.contains("usable"), "{text}");
+        assert!(text.contains("no_live_session"), "{text}");
     }
 
     #[tokio::test]

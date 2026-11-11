@@ -9,6 +9,7 @@ pub mod config_io;
 pub mod crypto;
 pub mod error;
 pub mod events;
+pub mod lease;
 pub mod logging;
 pub mod mcp;
 pub mod monitor;
@@ -151,6 +152,21 @@ pub fn run() {
                 _logging: logging,
             });
 
+            // 会话租约心跳：把「此刻打开着的连接」写进产品目录，MCP 侧据此判断
+            // 某台机器能不能用（见 `lease` 模块）。先立刻写一次，把上次崩溃
+            // 留下的旧文件即时覆盖掉 —— 否则最长要等一个 TTL 才失效。
+            lease::publish(&app.state::<AppState>());
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let interval = std::time::Duration::from_millis(lease::BEAT_MS);
+                loop {
+                    tokio::time::sleep(interval).await;
+                    if let Some(state) = handle.try_state::<AppState>() {
+                        lease::publish(&state);
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -206,7 +222,17 @@ pub fn run() {
             commands::mcp::mcp_config_set,
             commands::mcp::mcp_audit_recent,
             commands::mcp::mcp_allow_command,
+            commands::mcp::mcp_live_connections,
         ])
-        .run(tauri::generate_context!())
-        .expect("TermHarbor 启动失败");
+        .build(tauri::generate_context!())
+        .expect("TermHarbor 启动失败")
+        .run(|handle, event| {
+            // 正常退出时删掉租约文件：MCP 立刻失去「客户端在线」这个前提，
+            // 不必等 15 秒 TTL 过期。被强杀的情况仍然靠 TTL 兜底。
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(state) = handle.try_state::<AppState>() {
+                    crate::lease::clear(&state.paths.product_dir);
+                }
+            }
+        });
 }
