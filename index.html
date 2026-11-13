@@ -4,6 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TermHarbor 终端港</title>
+    <!--
+      首帧防闪：模块脚本是 defer 的，等它跑到 applyCachedTheme() 时浏览器可能已经
+      绘制过一帧浅色了。所以在这里同步先挂上 data-theme（内联、无网络依赖）。
+      真正的设置以数据库为准，main.tsx 读回来后会再校正一次。
+    -->
+    <script>
+      (() => {
+        try {
+          const raw = localStorage.getItem("termharbor.uiTheme");
+          const choice = raw === "light" || raw === "dark" ? raw : null;
+          const dark = choice
+            ? choice === "dark"
+            : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+
   </head>
   <body>
     <div id="root"></div>

@@ -121,7 +121,12 @@
 旧选择器保留到该页改完再清理，避免一次性大改导致某页崩掉找不到原因。
 
 **验证方式**：`npx vite` + Edge headless CDP 截图（脚本在 `.workbuddy/ui-shots/`），
-每步存 before/after 对照图；暗色用 CDP 模拟 `prefers-color-scheme: dark` 单独取证。
+每步存 before/after 对照图。
+
+> 0.2.3 起暗色**不再靠媒体查询**（改由 JS 挂 `<html data-theme>`，见下），
+> 所以 CDP 的 `Emulation.setEmulatedMedia` 模拟不生效了 —— 截图脚本改成导航后直接
+> `document.documentElement.setAttribute("data-theme","dark")`。页面挂载时会按
+> 「跟随系统」重算一次，所以必须在导航**之后**设。
 
 ## 六、怎么取证
 
@@ -142,3 +147,23 @@ node .workbuddy/ui-shots/shot-panels.mjs 标签  # 截四张（含暗色）
 **量尺寸比看截图可靠**：`node .workbuddy/ui-shots/measure.mjs` 用 CDP 直接读
 `getBoundingClientRect`，表头错位那次就是靠它确认「每行独立 grid 导致 auto 列宽各算各的」。
 截图里的"溢出"有一半是误判 —— 白卡片贴在近白底色上，边界根本看不出来。
+
+## 七、界面外观开关（0.2.3）
+
+用户问「客户端里没有深色开关吧」，确实没有：0.2.0 那批只做了 `@media (prefers-color-scheme: dark)`，
+想换外观只能去改 Windows 的「应用模式」。而设置页里那个叫「主题」的深/浅，
+其实只改终端区域（`TERM_THEMES` 只被终端页用到）—— 两个东西都叫「主题」，
+用户点「深色」界面还是白的，只会以为按钮坏了。
+
+三件事一起改：
+
+1. **拆成两项**：`界面外观`（跟随系统 / 浅色 / 深色，管整个 UI）+
+   `终端配色`（深色 / 浅色，只管终端）。不联动是刻意的 —— 白界面配黑终端很常见。
+2. **令牌只留一份**：删掉媒体查询，改成 `:root[data-theme="dark"]`。
+   用哪种由 `src/lib/theme.ts` 解析后挂到 `<html>` 上，「跟随系统」用 `matchMedia`。
+   写成两份（媒体查询 + 属性选择器）必然漂移。
+3. **首帧不闪**：模块脚本是 defer 的，等它跑到时浏览器可能已经画过一帧浅色。
+   `index.html` / `ui-preview.html` 里各有一段内联脚本，同步读 localStorage 先挂上；
+   设置从库里读回来再校正一次（缓存只是猜测，库里才是事实）。
+
+存储用现有 KV 表新增 `ui.theme`，缺失即 `system` —— 升级不该改变用户看到的外观。

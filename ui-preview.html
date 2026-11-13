@@ -3,6 +3,21 @@
   <head>
     <meta charset="utf-8" />
     <title>UI 预览（仅取证）</title>
+    <!-- 和 index.html 同一段：界面外观现在靠 data-theme，预览页也得先挂上 -->
+    <script>
+      (() => {
+        try {
+          const raw = localStorage.getItem("termharbor.uiTheme");
+          const choice = raw === "light" || raw === "dark" ? raw : null;
+          const dark = choice
+            ? choice === "dark"
+            : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

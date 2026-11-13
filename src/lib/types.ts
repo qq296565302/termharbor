@@ -192,12 +192,25 @@ export interface DiagResult {
 /** 终端配色主题，对应 `commands::settings::TerminalTheme` */
 export type TerminalTheme = "dark" | "light";
 
+/**
+ * 界面外观，对应 `commands::settings::UiTheme`。
+ *
+ * 和 `TerminalTheme` 是两件事：那个只管终端区域的配色，这个管整个界面。
+ * 两者默认不联动 —— 「白界面 + 黑终端」是很常见的偏好。
+ */
+export type UiTheme = "system" | "light" | "dark";
+
+/** `UiTheme` 解析之后的结果：挂到 `<html data-theme>` 上的那个值 */
+export type ResolvedTheme = "light" | "dark";
+
 /** 对应 `commands::settings::Settings` */
 export interface Settings {
   fontSize: number;
   theme: TerminalTheme;
   /** 终端回滚缓冲行数 */
   scrollback: number;
+  /** 界面外观。`system` = 跟随系统 */
+  uiTheme: UiTheme;
 }
 
 /** 对应 `snippets::EnvStatus` */

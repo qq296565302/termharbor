@@ -20,6 +20,8 @@ use crate::storage::settings as store;
 const KEY_FONT_SIZE: &str = "terminal.fontSize";
 const KEY_THEME: &str = "terminal.theme";
 const KEY_SCROLLBACK: &str = "terminal.scrollback";
+/// 界面外观。和 `terminal.theme` 是两件事：那个只改终端配色，这个改整个界面。
+const KEY_UI_THEME: &str = "ui.theme";
 
 /// 字号范围。下限保证 80 列还能塞进窗口，上限是"再大就只看得见几个字"。
 const FONT_SIZE_MIN: u32 = 10;
@@ -53,12 +55,46 @@ impl TerminalTheme {
     }
 }
 
+/// 界面外观。
+///
+/// 为什么不直接复用 `TerminalTheme`：终端配色是个人口味（白界面配黑终端很正常），
+/// 界面明暗是整块 UI 的事，两者默认不该绑死。0.2.3 之前界面只跟系统走，
+/// 用户想改只能去 Windows 设置里改「应用模式」——现在有开关了。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiTheme {
+    /// 跟随系统（默认）
+    System,
+    Light,
+    Dark,
+}
+
+impl UiTheme {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "system" => Some(Self::System),
+            "light" => Some(Self::Light),
+            "dark" => Some(Self::Dark),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub font_size: u32,
     pub theme: TerminalTheme,
     pub scrollback: u32,
+    pub ui_theme: UiTheme,
 }
 
 impl Default for Settings {
@@ -67,6 +103,7 @@ impl Default for Settings {
             font_size: 13,
             theme: TerminalTheme::Dark,
             scrollback: 5_000,
+            ui_theme: UiTheme::System,
         }
     }
 }
@@ -88,6 +125,10 @@ impl Settings {
         if let Some(value) = pairs.get(KEY_SCROLLBACK).and_then(|raw| raw.parse().ok()) {
             settings.scrollback = value;
         }
+        // 老版本没有这个键，读不到就保持默认（跟随系统）——升级不该改变用户看到的外观。
+        if let Some(value) = pairs.get(KEY_UI_THEME).and_then(|raw| UiTheme::parse(raw)) {
+            settings.ui_theme = value;
+        }
 
         settings.sanitized()
     }
@@ -97,6 +138,7 @@ impl Settings {
             (KEY_FONT_SIZE.to_string(), self.font_size.to_string()),
             (KEY_THEME.to_string(), self.theme.as_str().to_string()),
             (KEY_SCROLLBACK.to_string(), self.scrollback.to_string()),
+            (KEY_UI_THEME.to_string(), self.ui_theme.as_str().to_string()),
         ]
     }
 
@@ -183,6 +225,24 @@ mod tests {
         assert_eq!(huge.scrollback, SCROLLBACK_MAX);
     }
 
+    /// 老版本的库里没有 `ui.theme`：必须退回「跟随系统」，不能因为缺键变成别的样子。
+    #[test]
+    fn missing_ui_theme_follows_the_system() {
+        let settings = Settings::from_pairs(&pairs(&[(KEY_FONT_SIZE, "15")]));
+        assert_eq!(settings.ui_theme, UiTheme::System);
+    }
+
+    #[test]
+    fn ui_theme_round_trips() {
+        for value in ["system", "light", "dark"] {
+            let settings = Settings::from_pairs(&pairs(&[(KEY_UI_THEME, value)]));
+            assert_eq!(settings.ui_theme.as_str(), value);
+        }
+        // 认不出来的值退回默认，而不是把界面变成未知状态
+        let bogus = Settings::from_pairs(&pairs(&[(KEY_UI_THEME, "neon")]));
+        assert_eq!(bogus.ui_theme, UiTheme::System);
+    }
+
     #[test]
     fn unparsable_values_fall_back_to_defaults() {
         let settings = Settings::from_pairs(&pairs(&[
@@ -200,6 +260,7 @@ mod tests {
             font_size: 15,
             theme: TerminalTheme::Light,
             scrollback: 8_000,
+            ui_theme: UiTheme::Dark,
         };
         let restored = Settings::from_pairs(&original.to_pairs().into_iter().collect());
         assert_eq!(restored, original);

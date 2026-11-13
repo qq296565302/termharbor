@@ -8,6 +8,7 @@ import AboutPage from "./pages/AboutPage";
 import SettingsPage from "./pages/SettingsPage";
 import TerminalPage from "./pages/TerminalPage";
 import { useSessionStore } from "./stores/sessionStore";
+import { applyTheme, watchSystemTheme } from "./lib/theme";
 import { useSettingsStore } from "./stores/settingsStore";
 import { useUiStore, type PageId } from "./stores/uiStore";
 
@@ -132,11 +133,19 @@ export default function App() {
   const ipcFailure = useSyncExternalStore(subscribeIpcFailure, getIpcFailure);
 
   const loadSettings = useSettingsStore((state) => state.load);
+  const uiTheme = useSettingsStore((state) => state.settings.uiTheme);
 
   // 设置要在终端建立会话之前就位，否则第一个标签会用默认字号
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // 「跟随系统」时得听着系统的明暗切换；选了固定值就不用管。
+  // 注意别把它写成无条件监听 —— 用户明确选了深色，系统一变成浅色就该忽略，否则开关形同虚设。
+  useEffect(() => {
+    if (uiTheme !== "system") return;
+    return watchSystemTheme(() => applyTheme("system"));
+  }, [uiTheme]);
 
   const statusText = error ? "后端异常" : pong ? (pong.locked ? "未解锁" : "就绪") : "连接中";
   const statusTone = error || pong?.locked ? "warn" : pong ? "ok" : "idle";

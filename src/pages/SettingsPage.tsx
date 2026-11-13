@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
-import type { BackupDto, Settings, TerminalTheme } from "../lib/types";
+import type { BackupDto, Settings, TerminalTheme, UiTheme } from "../lib/types";
 import { useSettingsStore } from "../stores/settingsStore";
 import McpSettings from "./McpSettings";
 
@@ -29,6 +29,23 @@ export const TERM_THEMES: Record<
     selectionBackground: "#b6d7f5",
   },
 };
+
+/**
+ * 界面外观三态。
+ *
+ * 刻意和下面的「终端配色」分开：终端配色只管终端那块区域，白界面配黑终端是很常见的
+ * 偏好；界面外观管侧边栏、页面、卡片。混成一个开关等于强制两者一致。
+ */
+const UI_THEME_ITEMS: { id: UiTheme; label: string; swatch: CSSProperties }[] = [
+  {
+    id: "system",
+    label: "跟随系统",
+    // 半浅半深：一眼看出「两边都听」
+    swatch: { background: "linear-gradient(105deg, #fafbfc 0 50%, #1b2029 50% 100%)" },
+  },
+  { id: "light", label: "浅色", swatch: { background: "#fafbfc", color: "#24292f" } },
+  { id: "dark", label: "深色", swatch: { background: "#0f1115", color: "#d8e2ef" } },
+];
 
 const FONT_SIZE_MIN = 10;
 const FONT_SIZE_MAX = 24;
@@ -158,6 +175,34 @@ export default function SettingsPage() {
 
       <section className="settings__group">
         <div className="settings__label">
+          <span>界面外观</span>
+          <span className="settings__value">
+            {UI_THEME_ITEMS.find((item) => item.id === settings.uiTheme)?.label}
+          </span>
+        </div>
+        <div className="settings__themes">
+          {UI_THEME_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`settings__theme ${settings.uiTheme === item.id ? "is-active" : ""}`}
+              onClick={() => change({ uiTheme: item.id })}
+            >
+              <span className="settings__swatch" style={item.swatch}>
+                {item.id === "system" ? "" : "Aa"}
+              </span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <p className="settings__hint">
+          「跟随系统」按 Windows 的「应用模式」自动切换。选了固定值就不再跟系统走。
+          这一项只管整个界面；终端自己的配色在下面单独设。
+        </p>
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
           <span>字号</span>
           <span className="settings__value">{settings.fontSize} px</span>
         </div>
@@ -178,7 +223,7 @@ export default function SettingsPage() {
 
       <section className="settings__group">
         <div className="settings__label">
-          <span>主题</span>
+          <span>终端配色</span>
         </div>
         <div className="settings__themes">
           {(["dark", "light"] as const).map((theme) => (
@@ -202,6 +247,7 @@ export default function SettingsPage() {
           ))}
         </div>
         <p className="settings__hint">
+          只改终端区域，不影响界面本身（界面明暗在上面「界面外观」里设）。
           浅色在强光环境下更省眼；深色适合长时间盯屏。
         </p>
       </section>
