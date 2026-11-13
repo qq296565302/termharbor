@@ -13,8 +13,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
+import { leaseLabel, REASON_LABEL } from "../lib/mcpAudit";
 import type {
   McpAuditEntry,
+  McpAuditView,
   McpConfig,
   McpConfigView,
   McpConnectionPolicy,
@@ -83,7 +85,12 @@ export default function McpSettings() {
   const [templates, setTemplates] = useState<string[]>([]);
   const [configPath, setConfigPath] = useState("");
   const [auditPath, setAuditPath] = useState("");
-  const [denied, setDenied] = useState<McpAuditEntry[]>([]);
+  /** 最近调用（放行 + 拒绝）。只列拒绝的话，伪造租约蒙混过去的那次恰恰看不到。 */
+  const [calls, setCalls] = useState<McpAuditEntry[]>([]);
+  const [onlyDenied, setOnlyDenied] = useState(false);
+  /** 本进程 pid 与启动时刻：用来判断某条记录的租约是不是本进程写的 */
+  const [selfPid, setSelfPid] = useState(0);
+  const [startedAt, setStartedAt] = useState(0);
   /** 客户端此刻连着的连接 id。在线校验靠它给每台机器打点。 */
   const [live, setLive] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -97,9 +104,9 @@ export default function McpSettings() {
   const load = useCallback(async () => {
     loaded.current = false;
     try {
-      const [view, recent, opened] = await Promise.all([
+      const [view, audit, opened] = await Promise.all([
         call<McpConfigView>("mcp_config_get"),
-        call<McpAuditEntry[]>("mcp_audit_recent"),
+        call<McpAuditView>("mcp_audit_recent"),
         call<string[]>("mcp_live_connections"),
       ]);
       setConfig(normalize(view));
@@ -107,7 +114,10 @@ export default function McpSettings() {
       setTemplates(view.commandTemplates);
       setConfigPath(view.configPath);
       setAuditPath(view.auditPath);
-      setDenied(recent.filter((item) => item.reason !== "invalid_params"));
+      // 参数错是调用方自己的问题，列出来只会淹没真正值得看的记录
+      setCalls(audit.entries.filter((item) => item.reason !== "invalid_params"));
+      setSelfPid(audit.selfPid);
+      setStartedAt(audit.startedAtMs);
       setLive(opened);
       setError(null);
       // 加载本身不算改动，别触发一次无意义的写回
@@ -223,6 +233,12 @@ export default function McpSettings() {
     () => (config ? Object.values(config.connections).filter((p) => p.enabled).length : 0),
     [config],
   );
+
+  // 最新在上：用户看这个列表是在问「刚才发生了什么」，不是看流水账。
+  const shown = useMemo(() => {
+    const list = onlyDenied ? calls.filter((item) => item.decision === "denied") : calls;
+    return [...list].reverse();
+  }, [calls, onlyDenied]);
 
   return (
     <section className="settings__group mcp">
@@ -538,31 +554,79 @@ export default function McpSettings() {
         </div>
       ) : null}
 
-      {denied.length > 0 ? (
-        <div className="mcp__denied">
-          <div className="mcp__caption">最近被拒绝的调用</div>
-          {denied.map((entry, index) => (
-            <div className="mcp__denied-row" key={`${entry.tsMs}-${index}`}>
-              <span className="mcp__denied-time">
-                {new Date(entry.tsMs).toLocaleTimeString()}
-              </span>
-              <span className="mcp__denied-conn">{entry.connection}</span>
-              <code className="mcp__denied-cmd">{entry.args || entry.tool}</code>
-              <span className="mcp__denied-reason">{entry.reason}</span>
-              {entry.reason === "command_not_allowed" && !entry.args.includes("***") ? (
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--small"
-                  onClick={() => void allowDenied(entry)}
-                >
-                  允许这条
-                </button>
-              ) : null}
-              {entry.reason === "secret_path" ? (
-                <span className="mcp__denied-reason">需在「细化权限」里放开凭据文件</span>
-              ) : null}
+      {calls.length > 0 ? (
+        <div className="mcp__calls">
+          <div className="mcp__calls-head">
+            <span className="mcp__caption">最近调用</span>
+            <div className="mcp__calls-filter">
+              <button
+                type="button"
+                className={`mcp__filter${onlyDenied ? "" : " is-on"}`}
+                onClick={() => setOnlyDenied(false)}
+              >
+                全部 {calls.length}
+              </button>
+              <button
+                type="button"
+                className={`mcp__filter${onlyDenied ? " is-on" : ""}`}
+                onClick={() => setOnlyDenied(true)}
+              >
+                仅被拒 {calls.filter((item) => item.decision === "denied").length}
+              </button>
             </div>
-          ))}
+          </div>
+
+          <p className="mcp__calls-hint">
+            「租约」是这次调用当时用来判断「能不能连」的那份文件：谁写的、写完多久。
+            它防不了伪造（同一用户下任何进程都能改那个文件），所以这里给的是核对依据 ——
+            某条记录的租约不是当前客户端（#{selfPid}）写的，会被标黄。
+          </p>
+
+          <ul className="mcp__calls-list">
+            {shown.map((entry, index) => {
+              const lease = leaseLabel(entry, selfPid, startedAt);
+              const isDenied = entry.decision === "denied";
+              return (
+                <li className="mcp__call" key={`${entry.tsMs}-${index}`}>
+                  <span
+                    className="mcp__call-time"
+                    title={new Date(entry.tsMs).toLocaleString()}
+                  >
+                    {new Date(entry.tsMs).toLocaleTimeString()}
+                  </span>
+                  <span className={`mcp__call-tag${isDenied ? " is-denied" : ""}`}>
+                    {isDenied ? "拒绝" : "放行"}
+                  </span>
+                  <span className="mcp__call-conn">{entry.connection}</span>
+                  <span className="mcp__call-tool">{entry.tool}</span>
+                  <span
+                    className={`mcp__call-lease${lease.foreign ? " is-foreign" : ""}`}
+                    title={lease.hint}
+                  >
+                    {lease.text}
+                    {lease.foreign ? " · 非本进程" : ""}
+                  </span>
+                  {isDenied ? (
+                    <span className="mcp__call-reason" title={entry.reason}>
+                      {REASON_LABEL[entry.reason] ?? entry.reason}
+                    </span>
+                  ) : null}
+                  {entry.reason === "command_not_allowed" && !entry.args.includes("***") ? (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={() => void allowDenied(entry)}
+                    >
+                      允许这条
+                    </button>
+                  ) : null}
+                  <code className="mcp__call-args" title={entry.args}>
+                    {entry.args || entry.tool}
+                  </code>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       ) : null}
 

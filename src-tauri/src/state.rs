@@ -148,6 +148,11 @@ pub struct AppState {
     pub sftp: Arc<SftpManager>,
     /// 在途传输的取消令牌。
     pub transfers: Arc<Transfers>,
+    /// 本进程启动时刻（毫秒）。
+    ///
+    /// 设置页核对「这条记录的租约是不是本进程写的」要用它：早于这个时刻的记录
+    /// 属于上一次运行，pid 对不上是正常的，不能当异常报给用户。
+    pub started_at_ms: u64,
     pub _logging: LoggingGuard,
 }
 

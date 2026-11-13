@@ -17,6 +17,7 @@ use super::audit::AuditLog;
 use super::config::ConfigStore;
 use crate::crypto::{default_provider, FieldCipher};
 use crate::error::AppResult;
+use crate::lease::LeaseStamp;
 use crate::logging::LoggingGuard;
 use crate::sftp::{SftpManager, Transfers};
 use crate::ssh::session::SessionManager;
@@ -40,6 +41,12 @@ pub struct Context {
     /// 测试里默认关掉：不然每个要连服务器的用例都得先伪造一份租约文件。
     /// 需要专门验证闸门的用例用 [`Context::with_lease`] 打开。
     enforce_lease: bool,
+    /// 本次调用读到的租约指纹，供审计用。
+    ///
+    /// 做成「一个调用一个格子」而不是返回值，是为了不让 9 个工具函数都为审计多传一个参数。
+    /// 前提是 MCP 侧**串行处理请求**（`server::handle_line` 一次只 await 一个），
+    /// 换并发的话这里要改成按请求上下文传递。每次 `call()` 开头会先清空。
+    lease_stamp: Mutex<Option<LeaseStamp>>,
 }
 
 impl Context {
@@ -57,6 +64,7 @@ impl Context {
             audit,
             client: Mutex::new("unknown".into()),
             enforce_lease: true,
+            lease_stamp: Mutex::new(None),
         })
     }
 
@@ -79,6 +87,7 @@ impl Context {
             client: Mutex::new("unknown".into()),
             // 测试默认不查租约：每个用例都要先伪造文件才连得上，噪音太大。
             enforce_lease: false,
+            lease_stamp: Mutex::new(None),
         }
     }
 
@@ -92,6 +101,21 @@ impl Context {
     /// 生产环境恒为 true，见字段注释。
     pub fn enforces_lease(&self) -> bool {
         self.enforce_lease
+    }
+
+    /// 记下这次闸门读到的租约指纹（`gated()` 调用）。
+    pub fn set_lease_stamp(&self, stamp: Option<LeaseStamp>) {
+        if let Ok(mut slot) = self.lease_stamp.lock() {
+            *slot = stamp;
+        }
+    }
+
+    /// 取走并清空。每次 `call()` 开头先取一次，保证不会把上一次的指纹记到这一次头上。
+    pub fn take_lease_stamp(&self) -> Option<LeaseStamp> {
+        self.lease_stamp
+            .lock()
+            .map(|mut slot| slot.take())
+            .unwrap_or(None)
     }
 
     pub fn paths(&self) -> &AppPaths {
@@ -173,6 +197,7 @@ impl Context {
             sessions: Arc::new(SessionManager::new()),
             sftp: Arc::new(SftpManager::new()),
             transfers: Arc::new(Transfers::new()),
+            started_at_ms: crate::state::now_millis(),
             // MCP 不落盘日志（真日志要和 GUI 分开规划），但 stdout 更不能碰
             _logging: LoggingGuard::disabled(),
         });

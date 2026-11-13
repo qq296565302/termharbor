@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::lease::LeaseStamp;
 use crate::redact::redact;
 use crate::state::now_millis;
 
@@ -37,6 +38,13 @@ pub struct AuditEntry {
     pub duration_ms: u64,
     pub bytes: usize,
     pub result: String,
+    /// 这次调用是**哪一份租约**授权的（pid + 心跳时间）。
+    ///
+    /// 老记录里没有这个字段，`default` 兜住。`None` 有两种含义：没开在线校验、
+    /// 或者读的时候压根没有租约文件 —— 后者会以 `no_live_session` 拒绝，
+    /// 所以看拒绝行时不用纠结这一栏是空的。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<LeaseStamp>,
 }
 
 impl AuditEntry {
@@ -52,6 +60,7 @@ impl AuditEntry {
             duration_ms: 0,
             bytes: 0,
             result: "ok".into(),
+            lease: None,
         }
     }
 
@@ -67,7 +76,14 @@ impl AuditEntry {
             duration_ms: 0,
             bytes: 0,
             result: "denied".into(),
+            lease: None,
         }
+    }
+
+    /// 挂上这次调用的租约指纹。链式调用，构造点不必关心字段顺序。
+    pub fn with_lease(mut self, lease: Option<LeaseStamp>) -> Self {
+        self.lease = lease;
+        self
     }
 
     pub fn finish(mut self, started_ms: u64, bytes: usize, result: impl Into<String>) -> Self {
@@ -132,8 +148,11 @@ impl AuditLog {
         }
     }
 
-    /// 最近的拒绝记录，给设置页「一键允许」用。倒序返回。
-    pub fn recent_denied(&self, limit: usize) -> Vec<AuditEntry> {
+    /// 最近 N 条调用（放行与拒绝都算），时间正序（最新在末尾）。
+    ///
+    /// 设置页的「最近调用」用它。为什么必须包含放行：租约指纹的价值在于核对
+    /// 「那次是谁放行的」，只列拒绝的话，用伪造租约蒙混过去的那次恰恰不会出现。
+    pub fn tail(&self, limit: usize) -> Vec<AuditEntry> {
         let raw = match std::fs::read_to_string(&self.path) {
             Ok(raw) => raw,
             Err(_) => return Vec::new(),
@@ -142,7 +161,6 @@ impl AuditLog {
             .lines()
             .rev()
             .filter_map(|line| serde_json::from_str::<AuditEntry>(line).ok())
-            .filter(|entry| entry.decision == "denied")
             .take(limit)
             .collect();
         out.reverse();
@@ -184,17 +202,53 @@ mod tests {
     }
 
     #[test]
-    fn recent_denied_only_returns_denials_newest_last() {
-        let dir = temp_dir("denied");
+    fn tail_keeps_allowed_and_denied_in_order() {
+        let dir = temp_dir("tail");
         let log = AuditLog::new(&dir);
         log.record(&AuditEntry::denied("exec", "a", "bad1", "c", "x"));
         log.record(&AuditEntry::allowed("exec", "a", "df -h", "c"));
         log.record(&AuditEntry::denied("exec", "a", "bad2", "c", "y"));
 
-        let denied = log.recent_denied(10);
-        assert_eq!(denied.len(), 2);
-        assert_eq!(denied[0].args, "bad1");
-        assert_eq!(denied[1].args, "bad2");
+        let tail = log.tail(10);
+        assert_eq!(tail.len(), 3);
+        assert_eq!(tail[0].args, "bad1");
+        assert_eq!(tail[1].args, "df -h");
+        assert_eq!(tail[2].args, "bad2");
+    }
+
+    /// 0.2.1 及更早写的日志没有 lease 字段，升级后必须还能读出来。
+    #[test]
+    fn old_entries_without_lease_still_parse() {
+        let dir = temp_dir("old");
+        let log = AuditLog::new(&dir);
+        std::fs::write(
+            log.path(),
+            r#"{"tsMs":1,"client":"c","tool":"exec","connection":"a","args":"df","decision":"allowed","reason":"-","durationMs":1,"bytes":2,"result":"ok"}
+"#,
+        )
+        .unwrap();
+
+        let tail = log.tail(5);
+        assert_eq!(tail.len(), 1);
+        assert!(tail[0].lease.is_none(), "老记录没有指纹，不能解析失败");
+    }
+
+    #[test]
+    fn lease_stamp_round_trips_through_jsonl() {
+        let dir = temp_dir("lease");
+        let log = AuditLog::new(&dir);
+        log.record(
+            &AuditEntry::allowed("exec", "a", "df", "c").with_lease(Some(LeaseStamp {
+                pid: 42,
+                beat_ms: 1_000,
+                age_ms: 12,
+            })),
+        );
+
+        let raw = std::fs::read_to_string(log.path()).unwrap();
+        assert!(raw.contains("\"pid\":42"), "指纹要落盘：{raw}");
+        assert!(raw.contains("\"ageMs\":12"), "心跳年龄要落盘：{raw}");
+        assert_eq!(log.tail(1)[0].lease.as_ref().unwrap().pid, 42);
     }
 
     #[test]

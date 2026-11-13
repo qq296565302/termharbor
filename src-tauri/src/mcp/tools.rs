@@ -229,6 +229,9 @@ enum Outcome {
 /// 分发一次工具调用，统一做审计。
 pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Result<Value, RpcError> {
     let started = now_millis();
+    // 清掉上一次调用留下的指纹：任何早退路径（未知工具、参数错）都该记成「无租约」，
+    // 而不是把上一条命令的租约记到这一条头上。
+    let _ = ctx.take_lease_stamp();
     // exec 的审计参数记**命令本身**而不是整包 JSON：设置页「允许这条」要用它，
     // 记成 JSON 就没法直接加进白名单了。
     let args_desc = if name == TOOL_EXEC {
@@ -290,6 +293,8 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
         }
     };
 
+    // 一次取走，三个分支共用。放行行记的是「谁放的行」，拒绝行记的是「拒绝时看到的是哪份租约」。
+    let lease = ctx.take_lease_stamp();
     let entry = match &outcome {
         Outcome::Ok { value, connection } => {
             let bytes = value["content"][0]["text"]
@@ -297,20 +302,19 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
                 .map(str::len)
                 .unwrap_or(0);
             let is_err = value["isError"] == true;
-            super::audit::AuditEntry::allowed(name, connection, &args_desc, &client).finish(
-                started,
-                bytes,
-                if is_err { "error" } else { "ok" },
-            )
+            super::audit::AuditEntry::allowed(name, connection, &args_desc, &client)
+                .with_lease(lease.clone())
+                .finish(started, bytes, if is_err { "error" } else { "ok" })
         }
         Outcome::Denied {
             connection, reason, ..
-        } => denied_entry(name, connection, &args_desc, &client, reason.as_str()),
+        } => denied_entry(name, connection, &args_desc, &client, reason.as_str())
+            .with_lease(lease.clone()),
         Outcome::Error { connection, err } => {
-            let mut entry = super::audit::AuditEntry::allowed(
-                name, connection, &args_desc, &client,
-            )
-            .finish(started, 0, redact(&describe(err)));
+            let mut entry =
+                super::audit::AuditEntry::allowed(name, connection, &args_desc, &client)
+                    .with_lease(lease.clone())
+                    .finish(started, 0, redact(&describe(err)));
             entry.result = format!("error: {}", redact(&describe(err)));
             entry
         }
@@ -419,13 +423,22 @@ fn gated(
     if !ctx.enforces_lease() || !cfg.require_live_session {
         return Ok(policy.clone());
     }
-    match crate::lease::check(&ctx.paths().product_dir, &record.id, now_millis()) {
-        Ok(()) => Ok(policy.clone()),
-        Err(crate::lease::Miss::NotRunning) => Err(DenyReason::NoLiveSession(Liveness::NotRunning)),
-        Err(crate::lease::Miss::Expired) => Err(DenyReason::NoLiveSession(Liveness::Expired)),
-        Err(crate::lease::Miss::NotConnected) => {
-            Err(DenyReason::NoLiveSession(Liveness::NotConnected))
+
+    // 一次读文件，同时拿到「能不能用」和「这份租约是谁写的」。指纹先落格：
+    // **拒绝也要记** —— 用户要核对的正是「被拒的那次，它看到的是哪份租约」。
+    let (status, stamp) = crate::lease::observe(&ctx.paths().product_dir, now_millis());
+    ctx.set_lease_stamp(stamp);
+
+    match status {
+        crate::lease::Status::Live(open) => {
+            if open.iter().any(|id| id == &record.id) {
+                Ok(policy.clone())
+            } else {
+                Err(DenyReason::NoLiveSession(Liveness::NotConnected))
+            }
         }
+        crate::lease::Status::Expired { .. } => Err(DenyReason::NoLiveSession(Liveness::Expired)),
+        crate::lease::Status::Missing => Err(DenyReason::NoLiveSession(Liveness::NotRunning)),
     }
 }
 
@@ -1431,6 +1444,18 @@ mod tests {
             gate(&ctx, &record),
             Err(DenyReason::NoLiveSession(Liveness::Expired))
         ));
+    }
+
+    /// 拒绝时也要把「看到的租约」记下来：用户核对的就是这一刻。
+    #[test]
+    fn gate_records_the_lease_it_saw() {
+        let (ctx, record) = lease_ctx();
+        crate::lease::write(&ctx.paths().product_dir, &["another".to_string()]).expect("写租约");
+        let _ = ctx.take_lease_stamp();
+
+        assert!(gate(&ctx, &record).is_err());
+        let stamp = ctx.take_lease_stamp().expect("拒绝也要留下指纹");
+        assert_eq!(stamp.pid, std::process::id());
     }
 
     /// 用户在设置里关掉校验 → 退回旧行为（客户端不运行也能用）。

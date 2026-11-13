@@ -84,6 +84,72 @@ pub enum Miss {
     NotConnected,
 }
 
+/// 一次调用读到的租约指纹，写进审计。
+///
+/// **只用于事后核对，不参与放行判断。** 它救不了伪造 —— 同一个 Windows 用户下的
+/// 任何进程都能往那个文件里写，签名也一样（密钥文件同样归这个用户）。所以这一栏
+/// 的价值是「把某次调用和某一次心跳对上」，让用户能自己看出
+/// 「这个时间点我根本没开过客户端，那谁写的租约」。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaseStamp {
+    /// 写这份租约的进程
+    pub pid: u32,
+    /// 它最后一次心跳的时间
+    pub beat_ms: u64,
+    /// 读到它时已经多久没心跳了（毫秒）
+    pub age_ms: u64,
+}
+
+/// 读一次文件，同时给出「能不能用」和「这份租约是谁写的」。
+///
+/// 两件事必须出自**同一次读取**：分开读的话，中间可能刚好来了一次心跳，
+/// 于是审计里记的指纹和实际参与判断的那份对不上 —— 那这栏就没有核对价值了。
+pub fn observe(product_dir: &Path, now_ms: u64) -> (Status, Option<LeaseStamp>) {
+    let Ok(raw) = fs::read(path(product_dir)) else {
+        return (Status::Missing, None);
+    };
+    // 解析失败一律当「不在」：宁可让 agent 找用户重连，也不能因为一份坏文件放行。
+    let Ok(lease) = serde_json::from_slice::<Lease>(&raw) else {
+        return (Status::Missing, None);
+    };
+    if lease.version != VERSION {
+        return (Status::Missing, None);
+    }
+
+    // saturating：时钟被往回调整时不要算出天文数字
+    let age_ms = now_ms.saturating_sub(lease.beat_ms);
+    let stamp = LeaseStamp {
+        pid: lease.pid,
+        beat_ms: lease.beat_ms,
+        age_ms,
+    };
+    if age_ms > TTL_MS {
+        return (Status::Expired { age_ms }, Some(stamp));
+    }
+    (Status::Live(lease.connections), Some(stamp))
+}
+
+/// 读当前状态。`now_ms` 传进来而不是内部取，测试才能造出「过期」。
+pub fn status(product_dir: &Path, now_ms: u64) -> Status {
+    observe(product_dir, now_ms).0
+}
+
+/// MCP 侧的闸门：这台机器此刻能不能连。
+pub fn check(product_dir: &Path, connection_id: &str, now_ms: u64) -> Result<(), Miss> {
+    match status(product_dir, now_ms) {
+        Status::Missing => Err(Miss::NotRunning),
+        Status::Expired { .. } => Err(Miss::Expired),
+        Status::Live(open) => {
+            if open.iter().any(|id| id == connection_id) {
+                Ok(())
+            } else {
+                Err(Miss::NotConnected)
+            }
+        }
+    }
+}
+
 /// 原子写：先写临时文件再 rename。
 ///
 /// 不能直接覆写 —— MCP 随时可能在读，读到半截 JSON 只会被当成「格式坏」，
@@ -115,42 +181,6 @@ pub fn write(product_dir: &Path, connections: &[String]) -> io::Result<()> {
 /// 正常退出时删掉。删失败也不影响正确性 —— TTL 兜底。
 pub fn clear(product_dir: &Path) {
     let _ = fs::remove_file(path(product_dir));
-}
-
-/// 读当前状态。`now_ms` 传进来而不是内部取，测试才能造出「过期」。
-pub fn status(product_dir: &Path, now_ms: u64) -> Status {
-    let Ok(raw) = fs::read(path(product_dir)) else {
-        return Status::Missing;
-    };
-    // 解析失败一律当「不在」：宁可让 agent 找用户重连，也不能因为一份坏文件放行。
-    let Ok(lease) = serde_json::from_slice::<Lease>(&raw) else {
-        return Status::Missing;
-    };
-    if lease.version != VERSION {
-        return Status::Missing;
-    }
-
-    // saturating：时钟被往回调整时不要算出天文数字
-    let age_ms = now_ms.saturating_sub(lease.beat_ms);
-    if age_ms > TTL_MS {
-        return Status::Expired { age_ms };
-    }
-    Status::Live(lease.connections)
-}
-
-/// MCP 侧的闸门：这台机器此刻能不能连。
-pub fn check(product_dir: &Path, connection_id: &str, now_ms: u64) -> Result<(), Miss> {
-    match status(product_dir, now_ms) {
-        Status::Missing => Err(Miss::NotRunning),
-        Status::Expired { .. } => Err(Miss::Expired),
-        Status::Live(open) => {
-            if open.iter().any(|id| id == connection_id) {
-                Ok(())
-            } else {
-                Err(Miss::NotConnected)
-            }
-        }
-    }
 }
 
 /// 把当前真实状态写进租约。GUI 在连接建立/断开后立即调一次，心跳线程定时调。
@@ -281,6 +311,28 @@ mod tests {
             check(&dir, "c1", crate::state::now_millis()),
             Err(Miss::NotRunning)
         );
+    }
+
+    /// 指纹要能说明「这份租约是谁写的、写完多久了」—— 审计核对全靠它。
+    #[test]
+    fn observe_reports_who_wrote_the_lease() {
+        let root = temp_dir();
+        write(&root, &ids(&["c1"])).expect("写租约");
+
+        let (status, stamp) = observe(&root, crate::state::now_millis());
+        assert!(matches!(status, Status::Live(_)));
+        let stamp = stamp.expect("有文件就该有指纹");
+        assert_eq!(stamp.pid, std::process::id(), "pid 应当是写它的进程");
+        assert!(stamp.age_ms < 5_000, "刚写完的租约不该显老");
+    }
+
+    /// 文件不在时既没有可用性也没有指纹，两个返回值必须一致。
+    #[test]
+    fn observe_without_file_has_no_stamp() {
+        let root = temp_dir();
+        let (status, stamp) = observe(&root, crate::state::now_millis());
+        assert_eq!(status, Status::Missing);
+        assert!(stamp.is_none());
     }
 
     /// 重复 id 要去重：两次心跳之间连接数不该让文件变大。

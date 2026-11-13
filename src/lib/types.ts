@@ -330,6 +330,13 @@ export interface McpConfigView {
   auditPath: string;
 }
 
+/** 一次调用用的是哪份租约（谁写的、写完多久了）。只用于事后核对。 */
+export interface McpLeaseStamp {
+  pid: number;
+  beatMs: number;
+  ageMs: number;
+}
+
 export interface McpAuditEntry {
   tsMs: number;
   client: string;
@@ -341,4 +348,14 @@ export interface McpAuditEntry {
   durationMs: number;
   bytes: number;
   result: string;
+  /** 0.2.1 及更早的记录没有这个字段 */
+  lease?: McpLeaseStamp | null;
+}
+
+/** 最近调用 + 判断「租约是不是本进程写的」所需的两个数。 */
+export interface McpAuditView {
+  entries: McpAuditEntry[];
+  selfPid: number;
+  /** 本进程启动时刻。早于它的记录属于上一次运行，pid 对不上不算异常 */
+  startedAtMs: number;
 }

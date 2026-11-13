@@ -21,6 +21,7 @@ import type {
   EnvStatus,
   LoadSnapshot,
   McpAuditEntry,
+  McpAuditView,
   McpConfigView,
   RemoteEntry,
   SnippetDto,
@@ -174,9 +175,25 @@ const mcpView: McpConfigView = {
   auditPath: "%APPDATA%\\TermHarbor\\audit.jsonl",
 };
 
+/** 当前「客户端进程」的 pid：夹具里用它区分「本进程写的租约」和别人的 */
+const SELF_PID = 8842;
+
 const mcpDenied: McpAuditEntry[] = [
   {
-    tsMs: now - 40_000,
+    tsMs: now - 320_000,
+    client: "claude-ai",
+    tool: "exec",
+    connection: "prod-web-01",
+    args: "df -h",
+    decision: "allowed",
+    reason: "-",
+    durationMs: 412,
+    bytes: 620,
+    result: "ok",
+    lease: { pid: SELF_PID, beatMs: now - 322_200, ageMs: 2_200 },
+  },
+  {
+    tsMs: now - 200_000,
     client: "claude-ai",
     tool: "exec",
     connection: "prod-db-01",
@@ -185,38 +202,61 @@ const mcpDenied: McpAuditEntry[] = [
     reason: "command_not_allowed",
     durationMs: 0,
     bytes: 0,
-    result: "",
+    result: "denied",
+    lease: { pid: SELF_PID, beatMs: now - 201_100, ageMs: 1_100 },
   },
   {
-    tsMs: now - 120_000,
+    tsMs: now - 140_000,
     client: "claude-ai",
-    tool: "sftp_read",
+    tool: "sftp_list",
     connection: "prod-web-01",
-    args: "/root/.ssh/id_rsa",
-    decision: "denied",
-    reason: "secret_path",
-    durationMs: 0,
-    bytes: 0,
-    result: "",
+    args: '{"connection":"prod-web-01","path":"/var/log"}',
+    decision: "allowed",
+    reason: "-",
+    durationMs: 168,
+    bytes: 1_840,
+    result: "ok",
+    lease: { pid: SELF_PID, beatMs: now - 141_800, ageMs: 1_800 },
   },
   {
-    // 不带 *** 的一条：验证「允许这条」按钮长什么样
-    tsMs: now - 200_000,
+    // 非本进程写的租约：界面上要标黄（夹具故意用另一个 pid）
+    tsMs: now - 60_000,
+    client: "claude-ai",
+    tool: "exec",
+    connection: "prod-web-01",
+    args: "uptime",
+    decision: "allowed",
+    reason: "-",
+    durationMs: 388,
+    bytes: 92,
+    result: "ok",
+    lease: { pid: 1234, beatMs: now - 60_300, ageMs: 300 },
+  },
+  {
+    // 读的时候压根没有租约文件：指纹为空，原因写 no_live_session
+    tsMs: now - 20_000,
     client: "claude-ai",
     tool: "exec",
     connection: "prod-db-01",
-    args: "systemctl status mysql",
+    args: "uptime",
     decision: "denied",
-    reason: "command_not_allowed",
+    reason: "no_live_session",
     durationMs: 0,
     bytes: 0,
-    result: "",
+    result: "denied",
+    lease: null,
   },
 ];
 
+const mcpAudit: McpAuditView = {
+  entries: mcpDenied,
+  selfPid: SELF_PID,
+  startedAtMs: now - 3_600_000,
+};
+
 Object.assign(responses, {
   mcp_config_get: mcpView,
-  mcp_audit_recent: mcpDenied,
+  mcp_audit_recent: mcpAudit,
   // 只有 c1 在线：另一台显示「未连接」，一眼看出这道闸门在起作用
   mcp_live_connections: ["c1"],
   mcp_config_set: null,

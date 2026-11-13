@@ -149,6 +149,7 @@ pub fn run() {
                 sessions: Arc::new(SessionManager::new()),
                 sftp: Arc::new(SftpManager::new()),
                 transfers: Arc::new(Transfers::new()),
+                started_at_ms: crate::state::now_millis(),
                 _logging: logging,
             });
 

@@ -4191,44 +4191,146 @@ a:focus-visible,
   color: var(--accent);
 }
 
-.mcp__denied {
+/* 最近调用：一行一次调用，第二行是参数。列表自己有滚动上限，别把设置页拉太长 */
+.mcp__calls {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 8px 10px;
+  gap: 7px;
+  padding: 9px 11px;
   border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-sunken);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
 }
 
-.mcp__denied-row {
+.mcp__calls-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+}
+
+.mcp__calls-filter {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.mcp__filter {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
   color: var(--text-muted);
-  flex-wrap: wrap;
-}
-
-.mcp__denied-time,
-.mcp__denied-conn {
-  color: var(--text-faint);
   font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
 
-.mcp__denied-cmd {
-  flex: 1 1 auto;
-  min-width: 120px;
+.mcp__filter:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.mcp__filter.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mcp__calls-hint {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.mcp__calls-list {
+  max-height: 264px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  list-style: none;
+  overflow-y: auto;
+}
+
+.mcp__call {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mcp__call:last-child {
+  border-bottom: 0;
+}
+
+.mcp__call-time {
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 10.5px;
-  color: var(--text);
-  word-break: break-all;
+  font-variant-numeric: tabular-nums;
 }
 
-.mcp__denied-reason {
+.mcp__call-tag {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mcp__call-tag.is-denied {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.mcp__call-conn {
+  color: var(--text);
+  font-size: 11.5px;
+}
+
+.mcp__call-tool {
+  color: var(--text-faint);
   font-family: var(--mono);
   font-size: 10px;
-  color: var(--danger);
+}
+
+.mcp__call-lease {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* 非本进程写的租约：只标黄，不定罪 —— 开两个客户端窗口也会出现这种记录 */
+.mcp__call-lease.is-foreign {
+  padding: 0 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  cursor: help;
+}
+
+.mcp__call-reason {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* 参数占满第二行：命令和 SQL 都很长，挤在第一行只会全是省略号 */
+.mcp__call-args {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mcp__foot {

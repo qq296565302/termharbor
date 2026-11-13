@@ -86,10 +86,35 @@ pub fn mcp_config_set(state: State<'_, AppState>, config: McpConfig) -> AppResul
     ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir)).save(&config)
 }
 
-/// 最近被拒绝的调用，给「一键允许」用。
+/// 设置页一次显示多少条调用记录。
+///
+/// 100 条够看「刚才发生了什么」，又不至于让 IPC 传太大的包（参数摘要最长 2KB/条）。
+const AUDIT_TAIL: usize = 100;
+
+/// 最近调用 + 判断「租约是不是本进程写的」所需的两个数。
+///
+/// 为什么要带 `self_pid`：租约文件里记着写它的进程 pid，而正常情况下写它的人
+/// 就是**这个 GUI 进程**。所以「记录里的 pid ≠ 我的 pid，且这条记录发生在本次启动之后」
+/// 是一个用户看得懂的异常信号 —— 那份租约是别的进程写的。
+/// 判断放在前端做，pid 也一并给出去，用户能自己核对，而不是听一句"已为你检测过"。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditView {
+    pub entries: Vec<AuditEntry>,
+    pub self_pid: u32,
+    /// 本进程启动时刻。早于它的记录属于上一次运行，pid 对不上不算异常。
+    pub started_at_ms: u64,
+}
+
+/// 最近调用记录（放行 + 拒绝），给设置页看。
 #[tauri::command]
-pub fn mcp_audit_recent(state: State<'_, AppState>) -> Vec<AuditEntry> {
-    AuditLog::new(&crate::mcp::data_dir(&state.paths.product_dir)).recent_denied(20)
+pub fn mcp_audit_recent(state: State<'_, AppState>) -> AuditView {
+    let log = AuditLog::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    AuditView {
+        entries: log.tail(AUDIT_TAIL),
+        self_pid: std::process::id(),
+        started_at_ms: state.started_at_ms,
+    }
 }
 
 /// 此刻在客户端里打开着的连接 id（终端会话 + 文件面板，去重）。
