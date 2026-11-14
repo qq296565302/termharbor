@@ -1,3 +1,4 @@
+import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { fromUnknown } from "../lib/errors";
@@ -115,6 +116,28 @@ export default function SettingsPage() {
   const [backupError, setBackupError] = useState<string | null>(null);
   /** 正在二次确认的恢复项（文件名） */
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [backgroundError, setBackgroundError] = useState<string | null>(null);
+
+  /**
+   * 只存图片路径、不存图片内容。WebView 里要用时再让后端把这一个文件读成
+   * data URL —— 不给整个文件系统开 asset 协议，权限面小得多。
+   */
+  const pickBackground = useCallback(async () => {
+    setBackgroundError(null);
+    try {
+      const picked = await openFile({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] },
+        ],
+      });
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (path) change({ backgroundImage: path });
+    } catch (err) {
+      setBackgroundError(fromUnknown(err).message);
+    }
+  }, [change]);
 
   const loadBackups = useCallback(async () => {
     try {
@@ -269,6 +292,100 @@ export default function SettingsPage() {
         />
         <p className="settings__hint">
           终端最多记住多少行历史。调大能翻更久之前的输出，但每个会话都会多占内存。
+        </p>
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
+          <span>终端背景图</span>
+          <span className="settings__actions">
+            <button type="button" className="btn btn--small" onClick={() => void pickBackground()}>
+              选择图片
+            </button>
+            {settings.backgroundImage ? (
+              <button
+                type="button"
+                className="btn btn--ghost btn--small"
+                onClick={() => change({ backgroundImage: "" })}
+              >
+                清除
+              </button>
+            ) : null}
+          </span>
+        </div>
+        {settings.backgroundImage ? (
+          <p className="settings__path settings__path--block">{settings.backgroundImage}</p>
+        ) : (
+          <p className="settings__hint">不设背景图时，终端用上面「终端配色」里的纯色底。</p>
+        )}
+        <div className="settings__label settings__label--sub">
+          <span>图片浓度</span>
+          <span className="settings__value">{settings.backgroundOpacity}%</span>
+        </div>
+        <input
+          className="settings__range"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={settings.backgroundOpacity}
+          style={pctStyle(settings.backgroundOpacity, 0, 100)}
+          onChange={(event) => change({ backgroundOpacity: Number(event.target.value) })}
+        />
+        <p className="settings__hint">
+          浓度越高图片越明显，文字也越难看清。默认 40%。图片只在本机读取，不会上传到服务器。
+        </p>
+        {backgroundError ? <p className="settings__error">{backgroundError}</p> : null}
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
+          <span>命令输入栏</span>
+        </div>
+        <label className="settings__switch-row">
+          <input
+            type="checkbox"
+            checked={settings.commandBar}
+            onChange={(event) => change({ commandBar: event.target.checked })}
+          />
+          <span>在终端下方显示独立命令输入栏</span>
+        </label>
+        <p className="settings__hint">
+          输入时自动提示历史命令、访问过的路径和远端目录文件；Tab 补全，↑↓ 翻历史。
+          历史记录不设条数上限，在输入栏的「历史」里能查看全部、按字段挑着复用。
+          同一条命令可以同步发到所有已打开的标签，不限制标签数量。
+        </p>
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
+          <span>打包传输</span>
+        </div>
+        <label className="settings__switch-row">
+          <input
+            type="checkbox"
+            checked={settings.autoPack}
+            onChange={(event) => change({ autoPack: event.target.checked })}
+          />
+          <span>一次传多个文件（夹）时自动压缩传输</span>
+        </label>
+        <div className="settings__label settings__label--sub">
+          <span>触发阈值</span>
+          <span className="settings__value">{settings.packThreshold} 个</span>
+        </div>
+        <input
+          className="settings__range"
+          type="range"
+          min={1}
+          max={100}
+          step={1}
+          value={settings.packThreshold}
+          style={pctStyle(settings.packThreshold, 1, 100)}
+          onChange={(event) => change({ packThreshold: Number(event.target.value) })}
+        />
+        <p className="settings__hint">
+          选中文件数达到阈值就先在本机打成 tar.gz、传到对端再自动解开；下载文件夹同理。
+          小文件多的时候比逐个传快很多。需要服务器上有 tar 命令。
         </p>
       </section>
 

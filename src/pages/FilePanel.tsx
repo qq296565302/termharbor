@@ -13,6 +13,7 @@ import {
   validateRename,
 } from "../lib/files";
 import { call } from "../lib/ipc";
+import { useSettingsStore } from "../stores/settingsStore";
 import { resolveCdPath } from "../lib/shell";
 import type { RemoteEntry, SftpOpened, TransferProgress } from "../lib/types";
 
@@ -96,6 +97,8 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
   const [draft, setDraft] = useState("");
   const [action, setAction] = useState<RowAction>(null);
   const [transfers, setTransfers] = useState<TransferProgress[]>([]);
+  const autoPack = useSettingsStore((state) => state.settings.autoPack);
+  const packThreshold = useSettingsStore((state) => state.settings.packThreshold);
 
   // info 提示自己收掉（"已开始下载 x" 这类）；错误一直留着，直到下一次操作覆盖它。
   useEffect(() => {
@@ -192,11 +195,19 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     };
   }, [scheduleRefresh]);
 
-  const load = useCallback(async (sid: string, target: string) => {
-    const rows = await call<RemoteEntry[]>("sftp_list", { sessionId: sid, path: target });
-    setEntries(rows);
-    setPath(target);
-  }, []);
+  const load = useCallback(
+    async (sid: string, target: string) => {
+      const rows = await call<RemoteEntry[]>("sftp_list", { sessionId: sid, path: target });
+      setEntries(rows);
+      setPath(target);
+      // 路径历史同样不设上限：命令栏的路径补全靠它给出「我去过哪些目录」。
+      // 后端按 value 去重，反复进同一个目录只会刷新时间和使用次数。
+      void call("history_push", { kind: "path", value: target, connectionId }).catch(
+        () => undefined,
+      );
+    },
+    [connectionId],
+  );
 
   const openSession = async (connectionId: string) => {
     setBusy(true);
@@ -367,20 +378,48 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
    * 两个入口共用：工具栏「上传…」（系统文件对话框）与**拖拽**（OS 直接把路径丢过来，
    * 不经过对话框，所以后端那道 `ensure_upload_source` 是唯一的安全边界）。
    */
-  const upload = async (paths?: string[]) => {
+  const upload = async (paths?: string[], asDirectory = false) => {
     if (!sessionId) return;
     const dir = path;
     try {
       let list = paths;
       if (!list) {
         const picked = await open({
-          multiple: true,
-          directory: false,
-          title: "选择要上传的文件",
+          multiple: !asDirectory,
+          directory: asDirectory,
+          title: asDirectory ? "选择要上传的文件夹" : "选择要上传的文件",
         });
         list = Array.isArray(picked) ? picked : picked ? [picked] : [];
       }
       if (list.length === 0) return;
+
+      // 多个文件（或整个文件夹）先在本机打包再传，到对端自动解开。
+      // 目录只有这一条路可走：单个文件的 sftp_upload 明确拒绝目录。
+      // 开关关掉时仍允许手动走「打包下载」，但目录上传会立刻报错提示打开开关。
+      if (autoPack && (asDirectory || list.length >= packThreshold)) {
+        try {
+          const transferId = await call<string>("pack_upload", {
+            sessionId,
+            localPaths: list,
+            remoteDir: dir,
+          });
+          uploadDirs.current.set(transferId, dir);
+          setNotice({
+            kind: "info",
+            text: `已把 ${list.length} 项打包成 1 个传输任务，传完自动解开`,
+          });
+        } catch (err) {
+          setNotice(remoteErrorNotice(err));
+        }
+        return;
+      }
+      if (asDirectory) {
+        setNotice({
+          kind: "error",
+          text: "上传整个文件夹需要先在「设置 → 打包传输」里打开自动压缩传输",
+        });
+        return;
+      }
 
       let queued = 0;
       const failed: string[] = [];
@@ -409,8 +448,40 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     }
   };
 
+  /**
+   * 打包下载：远端先 tar -czf，传回本机再解开。
+   * 目录只能走这条路（单文件的 sftp_download 不支持目录），也可以一次打包多个路径。
+   */
+  const packDownload = async (remotePaths: string[]) => {
+    if (!sessionId || remotePaths.length === 0) return;
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: false,
+        title: "选择解包到哪个文件夹",
+      });
+      const localDir = Array.isArray(picked) ? picked[0] : picked;
+      if (!localDir) return;
+      await call<string>("pack_download", {
+        sessionId,
+        remotePaths,
+        localDir,
+      });
+      setNotice({
+        kind: "info",
+        text: `已开始打包下载 ${remotePaths.length} 项，传完自动解到所选文件夹`,
+      });
+    } catch (err) {
+      setNotice(remoteErrorNotice(err));
+    }
+  };
+
   const download = async (entry: RemoteEntry) => {
     if (!sessionId) return;
+    if (entry.isDir) {
+      await packDownload([entry.path]);
+      return;
+    }
     try {
       const target = await save({ defaultPath: entry.name, title: "保存到" });
       if (!target) return;
@@ -603,6 +674,23 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
             <path d="M2.8 11.2v1.5a.9.9 0 0 0 .9.9h8.6a.9.9 0 0 0 .9-.9v-1.5" />
           </svg>
           上传
+        </button>
+
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          title="上传整个文件夹（打包传输）"
+          onClick={() => void upload(undefined, true)}
+        >
+          文件夹
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          title="把当前目录打包下载到本机（自动解包）"
+          onClick={() => void packDownload([path])}
+        >
+          打包下载
         </button>
 
         <span className="files-bar__spacer" />
@@ -924,13 +1012,22 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     return (
       <>
         {entry.isDir ? (
-          <button
-            type="button"
-            className="ctx-menu__item"
-            onClick={() => runFromMenu(() => void load(sessionId!, entry.path))}
-          >
-            打开
-          </button>
+          <>
+            <button
+              type="button"
+              className="ctx-menu__item"
+              onClick={() => runFromMenu(() => void load(sessionId!, entry.path))}
+            >
+              打开
+            </button>
+            <button
+              type="button"
+              className="ctx-menu__item"
+              onClick={() => runFromMenu(() => void packDownload([entry.path]))}
+            >
+              打包下载…
+            </button>
+          </>
         ) : (
           <button
             type="button"

@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use russh::client::Handle;
 use russh::Disconnect;
@@ -26,7 +27,15 @@ pub struct SftpConn {
     /// 终端会话在 `SessionManager` 里天然带着它，SFTP 这边原来没有，补上。
     pub connection_id: String,
     /// 只用于主动断开。取走后为 None，重复 close 是安全的。
-    handle: Mutex<Option<Handle<ProbeHandler>>>,
+    handle: Mutex<Option<Arc<Handle<ProbeHandler>>>>,
+    /// 给 `exec` 复用的一份连接句柄。
+    ///
+    /// russh 的 `Handle` 内部有不可克隆的 mpsc receiver，没法 `Clone`；
+    /// 而远端 `tar` 命令必须开在**这条已登录的连接**上，不能重新握手（会绕过
+    /// 本会话已确认的主机指纹，还多一次往返）。所以建连时把 handle 包进 `Arc`：
+    /// 一份留在 `handle` 里由 `close()` 的 `take()` 独占并断开，另一份借给 `exec()`。
+    /// Arc 只是共享引用，`close()` 断的是同一个底层连接，语义不变。
+    exec_handle: Arc<Handle<ProbeHandler>>,
 }
 
 impl SftpConn {
@@ -44,6 +53,17 @@ impl SftpConn {
         if let Some(handle) = handle {
             let _ = handle.disconnect(Disconnect::ByApplication, "", "en").await;
         }
+    }
+
+    /// 在这条 SSH 连接上跑一条远端命令，返回合并后的 stdout + stderr。
+    ///
+    /// 打包传输用它执行 `tar`。复用 `ssh::exec` 里带超时/输出上限的实现；
+    /// 该实现只读字节流、不读退出码，命令是否成功由调用方按输出判定。
+    /// 超时由调用方给（打包/解包大目录可能比诊断命令久）。
+    pub async fn exec(&self, command: &str, timeout: Duration) -> AppResult<String> {
+        const MAX_OUTPUT: usize = 256 * 1024;
+        crate::ssh::exec::exec_once_limited(self.exec_handle.as_ref(), command, timeout, MAX_OUTPUT)
+            .await
     }
 }
 
@@ -161,7 +181,7 @@ pub async fn open(
         None
     };
 
-    let handle = established.handle;
+    let handle = Arc::new(established.handle);
 
     let channel = handle.channel_open_session().await.map_err(|err| {
         AppError::with_detail(ErrCode::SftpIoError, format!("打开 SFTP 通道失败: {err}"))
@@ -193,6 +213,7 @@ pub async fn open(
         session: Arc::new(session),
         home: home.clone(),
         connection_id,
+        exec_handle: Arc::clone(&handle),
         handle: Mutex::new(Some(handle)),
     });
 

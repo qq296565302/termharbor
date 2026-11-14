@@ -8,6 +8,7 @@
 pub mod backup;
 pub mod connections;
 pub mod db;
+pub mod history;
 pub mod known_hosts;
 pub mod migrations;
 pub mod settings;

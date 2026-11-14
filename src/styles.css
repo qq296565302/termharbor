@@ -4360,3 +4360,58 @@ a:focus-visible,
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* ---------------------------------------------------------------- 进阶设置 */
+/* 设置项标题右侧可以挂一组按钮；不写死宽度，靠 gap 排开 */
+.settings__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.settings__path--block {
+  display: block;
+  margin: 0 0 8px;
+  word-break: break-all;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+/* 一组设置里的第二级标题（例如「图片浓度」从属于「终端背景图」） */
+.settings__label--sub {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.settings__switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 8px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+
+.settings__switch-row input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* 高级监控侧栏和负载看板同一套宽度口径，否则 flex 会按内容宽度把表格挤扁 */
+.term-body > .adv {
+  flex: 0 0 min(560px, 56%);
+  min-width: 320px;
+  background: var(--bg-subtle);
+}
+
+/* 命令输入栏挂在 term-body 之后：占满一行、不参与剩余空间分配 */
+.term-page > .cb {
+  flex: 0 0 auto;
+  width: 100%;
+}

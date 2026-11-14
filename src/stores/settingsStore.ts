@@ -11,6 +11,12 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   scrollback: 5000,
   uiTheme: "system",
+  backgroundImage: "",
+  backgroundOpacity: 40,
+  commandBar: true,
+  autoPack: true,
+  packThreshold: 5,
+  monitorInterfaces: "",
 };
 
 interface SettingsState {

@@ -309,13 +309,13 @@ fn new_transfer_id(state: &AppState, session_id: &str) -> String {
 /// 没有 `sessionId` 它们分不清「这条进度是不是我的」，会互相显示对方的传输。
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProgressEvent {
+pub(crate) struct ProgressEvent {
     session_id: String,
     #[serde(flatten)]
     progress: transfer::TransferProgress,
 }
 
-fn progress_emitter(app: tauri::AppHandle, session_id: String) -> transfer::ProgressFn {
+pub(crate) fn progress_emitter(app: tauri::AppHandle, session_id: String) -> transfer::ProgressFn {
     Box::new(move |payload| {
         let event = ProgressEvent {
             session_id: session_id.clone(),

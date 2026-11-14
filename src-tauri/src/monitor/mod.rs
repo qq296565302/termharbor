@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+pub mod advanced;
 pub mod load;
 
 use crate::ssh::exec;

@@ -13,6 +13,7 @@
 
 pub mod list;
 pub mod ops;
+pub mod pack;
 pub mod session;
 pub mod transfer;
 

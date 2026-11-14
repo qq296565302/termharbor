@@ -1,0 +1,369 @@
+/* 独立命令输入栏。所有颜色取自 styles.css 的设计令牌，浅色/深色自动跟随。 */
+.cb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 统一 16px 线性描边图标，覆盖全局 .btn svg 的 14px 设定 */
+.cb svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cb__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb__input-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cb__input {
+  font-family: var(--mono);
+}
+
+.cb__send,
+.cb__history-btn {
+  flex: 0 0 auto;
+}
+
+/* ---------- 错误条 ----------
+   danger 影响功能，warn 只是补全/记录不可用，命令本身仍能发出去。 */
+.cb__banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  font-size: var(--fs-sm);
+}
+
+.cb__banner--danger {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.cb__banner--warn {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+
+.cb__banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cb__banner-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.cb__banner-close svg {
+  width: 12px;
+  height: 12px;
+  flex-basis: 12px;
+}
+
+/* ---------- 补全浮层 ---------- */
+.cb__suggest {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% - 2px);
+  z-index: 20;
+  max-height: 260px;
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.cb__suggest-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.cb__suggest-item:hover,
+.cb__suggest-item.is-active {
+  background: var(--accent-soft);
+}
+
+.cb__suggest-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
+.cb__badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.cb__badge--cmd {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cb__badge--path {
+  color: var(--ok);
+}
+
+.cb__badge--dir {
+  color: var(--warn);
+}
+
+/* ---------- 历史抽屉 ---------- */
+.cb__drawer {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% - 2px);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.cb__drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cb__drawer-title {
+  font-weight: 600;
+}
+
+.cb__drawer-count {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.cb__spacer {
+  flex: 1 1 auto;
+}
+
+.cb__drawer-searchbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cb__searchicon {
+  position: absolute;
+  left: 8px;
+  pointer-events: none;
+  color: var(--text-faint);
+}
+
+.cb__drawer-search {
+  padding-left: 28px;
+}
+
+.cb__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* 无限制历史：数据不截断，靠固定高度 + 滚动承载全部条目 */
+.cb__hist-list {
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.cb__hist-item {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+
+.cb__hist-item.is-active {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cb__hist-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cb__hist-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb__hist-value code {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
+.cb__hist-value:hover code {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.cb__hist-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.cb__hist-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.cb__hist-del:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.cb__hist-del svg {
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+}
+
+.cb__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.cb__chip {
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cb__chip:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.cb__chip.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cb__empty {
+  padding: 14px 4px;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+/* ---------- 广播开关 ---------- */
+.cb__broadcast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cb__broadcast input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.cb__broadcast-main {
+  color: var(--text);
+}
+
+.cb__broadcast-sub {
+  color: var(--text-faint);
+}

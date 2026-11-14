@@ -3,12 +3,14 @@ import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
-import { EMPTY_LINE, feedLine, parseCd } from "../lib/shell";
+import { EMPTY_LINE, feedLine, parseCd, resolveCdPath } from "../lib/shell";
 import { nextTabId } from "../lib/tabs";
+import AdvancedPanel from "./AdvancedPanel";
+import CommandBar from "./CommandBar";
 import SnippetPanel from "./SnippetPanel";
 import type { SnippetDto } from "../lib/types";
 
@@ -50,6 +52,7 @@ function TerminalView({
   tab,
   active,
   focusTick,
+  transparent,
   onEnter,
   onCommandLine,
 }: {
@@ -57,6 +60,8 @@ function TerminalView({
   active: boolean;
   /** 父组件插入片段后 +1，用来把焦点还给终端 */
   focusTick: number;
+  /** 有背景图时 xterm 的底色必须透明，否则图片被 xterm 画布盖住 */
+  transparent: boolean;
   /** 用户在终端里按了回车（真正提交了这行命令） */
   onEnter?: () => void;
   /** 用户敲完并回车的一整行命令（用来识别 cd，让文件面板跟着走） */
@@ -105,12 +110,17 @@ function TerminalView({
     let disposed = false;
     let pendingAck = 0;
 
+    // allowTransparency 常开，只在有背景图时把 theme.background 换成透明：
+    // 这个选项只能在构造时给，运行中改不会生效，而重建终端会丢掉回滚缓冲。
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Consolas, "Microsoft YaHei", monospace',
       fontSize,
       cursorBlink: true,
       scrollback,
-      theme: TERM_THEMES[themeName],
+      allowTransparency: true,
+      theme: transparent
+        ? { ...TERM_THEMES[themeName], background: "rgba(0,0,0,0)" }
+        : TERM_THEMES[themeName],
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -314,7 +324,9 @@ function TerminalView({
     if (!term) return;
 
     term.options.fontSize = fontSize;
-    term.options.theme = TERM_THEMES[themeName];
+    term.options.theme = transparent
+      ? { ...TERM_THEMES[themeName], background: "rgba(0,0,0,0)" }
+      : TERM_THEMES[themeName];
     term.options.scrollback = scrollback;
 
     // 字号变了字符尺寸也跟着变，必须重新 fit，否则行列数还是旧值
@@ -323,7 +335,7 @@ function TerminalView({
     } catch {
       // 隐藏状态下尺寸为 0，忽略
     }
-  }, [fontSize, themeName, scrollback]);
+  }, [fontSize, themeName, scrollback, transparent]);
 
   // 插入片段后把焦点还给终端，否则用户还得再点一下才能按回车执行
   useEffect(() => {
@@ -419,7 +431,36 @@ export default function TerminalPage() {
   const markBySession = useSessionStore((state) => state.markBySession);
   const pageActive = useUiStore((state) => state.activePage === "terminal");
   const themeName = useSettingsStore((state) => state.settings.theme);
+  const backgroundImage = useSettingsStore((state) => state.settings.backgroundImage);
+  const backgroundOpacity = useSettingsStore((state) => state.settings.backgroundOpacity);
+  const commandBar = useSettingsStore((state) => state.settings.commandBar);
   const connectionsRevision = useUiStore((state) => state.connectionsRevision);
+
+  /**
+   * 背景图只存本机路径，用的时候才让后端把这一个文件读成 data URL。
+   * 换图 / 清图都重新读；读失败（图片被删、权限变化）就退回纯色底，不弹错误打断终端。
+   */
+  const [bgUrl, setBgUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!backgroundImage) {
+      setBgUrl(null);
+      return;
+    }
+    void call<string>("read_background_image", { path: backgroundImage })
+      .then((url) => {
+        if (!cancelled) setBgUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setBgUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [backgroundImage]);
+
+  /** 每个标签「我们以为的 shell 当前目录」，给命令栏做相对路径补全。 */
+  const [cwdByTab, setCwdByTab] = useState<Record<string, string>>({});
 
   const [connections, setConnections] = useState<ConnectionDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -430,7 +471,9 @@ export default function TerminalPage() {
    * 用联合状态而不是三个布尔，是为了让「同时只能开一个」成为**类型上的事实**，
    * 而不是靠每个按钮里手写 `setOther(false)` 维持 —— 那种写法迟早漏一处。
    */
-  const [sidePanel, setSidePanel] = useState<"snippet" | "files" | "load" | null>(null);
+  const [sidePanel, setSidePanel] = useState<
+    "snippet" | "files" | "load" | "advanced" | null
+  >(null);
   /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
   const [filePanels, setFilePanels] = useState<string[]>([]);
   /**
@@ -496,14 +539,58 @@ export default function TerminalPage() {
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
-  /** 终端里敲完一行：认出 cd 就转给对应标签的文件面板 */
+  /** 终端里敲完一行：认出 cd 就转给对应标签的文件面板，同时记进无上限历史 */
   const handleCommandLine = useCallback((tabId: string, line: string) => {
     const target = parseCd(line);
-    if (!target) return;
+    if (target) {
+      cdSeq.current += 1;
+      setCdTargets((prev) => ({ ...prev, [tabId]: { seq: cdSeq.current, target } }));
+      // 命令栏的路径补全要知道「现在站在哪」。认不出的 cd 就不动（和文件面板一致的纪律）。
+      setCwdByTab((prev) => {
+        const cwd = prev[tabId] ?? "/";
+        return { ...prev, [tabId]: resolveCdPath(target, cwd, "/") ?? cwd };
+      });
+    }
 
-    cdSeq.current += 1;
-    setCdTargets((prev) => ({ ...prev, [tabId]: { seq: cdSeq.current, target } }));
+    // 直接在 xterm 里敲的命令也要进历史，不只是命令栏发的那部分。
+    // 后端按 value 去重，两处都记不会重复堆行。
+    const tab = useSessionStore.getState().tabs.find((item) => item.tabId === tabId);
+    void call("history_push", {
+      kind: "command",
+      value: line,
+      connectionId: tab?.connectionId ?? null,
+    }).catch(() => undefined);
   }, []);
+
+  /**
+   * 命令栏发送。broadcast=true 时把同一条命令发到所有已连接标签 ——
+   * 不限制标签数，也不限制同步的服务器数。
+   */
+  const sendCommand = useCallback(
+    (text: string, broadcast: boolean) => {
+      const store = useSessionStore.getState();
+      const active = store.tabs.find((tab) => tab.tabId === store.activeTabId);
+      const ids = broadcast
+        ? store.tabs
+            .map((tab) => tab.sessionId)
+            .filter((id): id is string => Boolean(id))
+        : active?.sessionId
+          ? [active.sessionId]
+          : [];
+
+      if (ids.length === 0) {
+        showNotice("先打开一个终端标签，命令栏要往当前会话写");
+        return;
+      }
+      const data = `${text}\r`;
+      for (const id of ids) {
+        void call("session_write", { sessionId: id, data }).catch((err) =>
+          showNotice(fromUnknown(err).message),
+        );
+      }
+    },
+    [showNotice],
+  );
 
   // 到点自动收起。seq 变化会重开计时器，所以连续插入两次不会被前一次的计时器提前清掉。
   useEffect(() => {
@@ -668,7 +755,7 @@ export default function TerminalPage() {
   };
 
   /** 再点一次同一个按钮就收起。 */
-  const togglePanel = (panel: "snippet" | "files" | "load") => {
+  const togglePanel = (panel: "snippet" | "files" | "load" | "advanced") => {
     setSidePanel((current) => (current === panel ? null : panel));
   };
 
@@ -757,6 +844,24 @@ export default function TerminalPage() {
   }, [pageActive]);
 
   const showPicker = tabs.length === 0 || pickerOpen;
+  const activeTab = tabs.find((tab) => tab.tabId === activeTabId);
+  const activeSessionId = activeTab?.sessionId ?? null;
+
+  /** 背景图压在终端底色之上：浓度 = 图片可见度，遮罩负责保证文字还读得清。 */
+  const terminalBackdrop: CSSProperties | undefined = bgUrl
+    ? (() => {
+        const alpha = Math.round((1 - backgroundOpacity / 100) * 255)
+          .toString(16)
+          .padStart(2, "0");
+        const base = `${TERM_THEMES[themeName].background}${alpha}`;
+        return {
+          backgroundImage: `linear-gradient(${base}, ${base}), url("${bgUrl}")`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        };
+      })()
+    : undefined;
 
   return (
     <div className="term-page">
@@ -866,6 +971,20 @@ export default function TerminalPage() {
             </svg>
             负载
           </button>
+
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm ${sidePanel === "advanced" ? "is-on" : ""}`}
+            title="高级监控（系统信息 / 网卡 / 完整进程 / 端口与连接）"
+            disabled={!activeTabId}
+            onClick={() => togglePanel("advanced")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7" />
+              <circle cx="12.2" cy="11.5" r="1.4" />
+            </svg>
+            高级
+          </button>
         </div>
       </div>
 
@@ -899,13 +1018,14 @@ export default function TerminalPage() {
       ) : null}
 
       <div className="term-body" style={{ background: TERM_THEMES[themeName].background }}>
-        <div className="term-main">
+        <div className="term-main" style={terminalBackdrop}>
           {tabs.map((tab) => (
             <TerminalView
               key={tab.tabId}
               tab={tab}
               active={tab.tabId === activeTabId}
               focusTick={focusTick}
+              transparent={Boolean(bgUrl)}
               onEnter={clearNotice}
               onCommandLine={(line) => handleCommandLine(tab.tabId, line)}
             />
@@ -925,10 +1045,14 @@ export default function TerminalPage() {
 
         {sidePanel === "load" ? (
           <LoadPanel
-            sessionId={tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null}
+            sessionId={activeSessionId}
             active={pageActive}
             onClose={() => setSidePanel(null)}
           />
+        ) : null}
+
+        {sidePanel === "advanced" && activeSessionId ? (
+          <AdvancedPanel sessionId={activeSessionId} onClose={() => setSidePanel(null)} />
         ) : null}
 
         {/* 文件面板一旦为某个标签打开过就**常驻挂载**，切到片段/负载时只隐藏。
@@ -985,6 +1109,16 @@ export default function TerminalPage() {
           </aside>
         ) : null}
       </div>
+
+      {commandBar && activeSessionId ? (
+        <CommandBar
+          sessionId={activeSessionId}
+          connectionId={activeTab?.connectionId ?? ""}
+          cwd={cwdByTab[activeTabId ?? ""] ?? "/"}
+          tabCount={tabs.length}
+          onSend={sendCommand}
+        />
+      ) : null}
 
       {notice ? (
         <p className="term-notice" role="status">

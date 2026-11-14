@@ -1,0 +1,398 @@
+/*
+ * 高级监控侧栏专用样式。
+ *
+ * 颜色一律走 styles.css 的设计令牌，浅色/深色由 <html data-theme> 切换，
+ * 这里不写死任何深浅背景。所有类以 adv__ 开头，避免和别的面板串味。
+ */
+
+.adv {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+/* 所有图标都是 16px 线性描边，颜色跟随按钮文字 */
+.adv svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ------------------------------------------------------------ 头部 */
+.adv__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.adv__title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.adv__spacer {
+  flex: 1 1 auto;
+}
+
+.adv__updated {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.adv__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.adv__auto.is-on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 只放图标的头部按钮：沿用 .btn--small 的 24px 高度 */
+.adv__icon-btn {
+  padding: 0;
+  width: var(--h-sm);
+}
+
+/* ------------------------------------------------------------ tab 条 */
+.adv__tabs {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.adv__tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.adv__tab:hover {
+  color: var(--text);
+}
+
+.adv__tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ 主体 */
+.adv__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.adv__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+
+.adv__section--fill {
+  flex: 1 1 auto;
+}
+
+.adv__section-title {
+  margin: 14px 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.adv__section-title:first-child {
+  margin-top: 0;
+}
+
+.adv__hint {
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.adv__hint--count {
+  margin: 0 0 6px;
+}
+
+/* ------------------------------------------------------------ 表格
+   统一用 <table> + table-layout: fixed + colgroup 写死列宽。
+   项目踩过「grid 冒充表格、除 1fr 外列没写死导致表头错位」的坑，
+   所以这里不用 grid，且每列宽度都由 colgroup 决定。 */
+.adv__table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  /* 进程/连接列表可能很长：限高 + 内部滚动，侧栏不被撑爆 */
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.adv__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--fs-xs);
+}
+
+.adv__table th,
+.adv__table td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adv__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.adv__table tbody tr:hover {
+  background: var(--bg-subtle);
+}
+
+/* 监听行用一层极淡的品牌底色，和已建立连接区分开 */
+.adv__table tbody tr.adv__row--listen,
+.adv__table tbody tr.adv__row--listen:hover {
+  background: var(--accent-soft);
+}
+
+/* 标签 + 值两列：th 当标签列，td 当值列 */
+.adv__kv {
+  margin-bottom: 6px;
+}
+
+.adv__kv-key {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.adv__kv-val {
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+.adv__cell--key {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.adv__cell--num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.adv__cell--nowrap {
+  white-space: nowrap;
+}
+
+/* 命令列在窄侧栏里截断，完整内容靠 title 属性查看 */
+.adv__cell--command {
+  font-family: var(--mono);
+}
+
+.adv__cell--action {
+  text-align: right;
+}
+
+.adv__cell--check {
+  text-align: center;
+}
+
+.adv__cell--check input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.adv__danger {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.adv__ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ 工具栏 / 筛选 */
+.adv__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.adv__search,
+.adv__sort select {
+  height: var(--h-md);
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+}
+
+.adv__search {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+
+.adv__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.adv__segment {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.adv__segment-btn {
+  height: var(--h-md);
+  padding: 0 9px;
+  border: none;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.adv__segment-btn + .adv__segment-btn {
+  border-left: 1px solid var(--border);
+}
+
+.adv__segment-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ 结束进程二次确认 */
+.adv__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+}
+
+.adv__confirm-text {
+  flex: 1 1 160px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+}
+
+/* ------------------------------------------------------------ 状态条 */
+/* 错误：淡色底 + 内联重试按钮，不当弹窗；旧快照仍留在下方 */
+.adv__error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--fs-xs);
+}
+
+.adv__error > span {
+  flex: 1 1 auto;
+}
+
+.adv__error-inline {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-xs);
+}
+
+/* 警告（如「服务器没有 ss」）：只是提示，比错误更轻 */
+.adv__warn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.adv__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adv__skel-line {
+  display: block;
+  height: 12px;
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+}
+
+.adv__skel-line:nth-child(1) {
+  width: 80%;
+}
+
+.adv__skel-line:nth-child(2) {
+  width: 60%;
+}
+
+.adv__skel-line:nth-child(3) {
+  width: 90%;
+}

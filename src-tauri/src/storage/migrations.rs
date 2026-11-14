@@ -26,6 +26,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "connection_legacy_flag",
         sql: include_str!("../../migrations/002_connection_legacy_flag.sql"),
     },
+    Migration {
+        version: 3,
+        name: "history",
+        sql: include_str!("../../migrations/003_history.sql"),
+    },
 ];
 
 /// 最新 schema 版本，供自检信息与前端版本校验使用。

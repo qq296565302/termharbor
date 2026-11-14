@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { parseInterfaces } from "../lib/advancedFormat";
 import { fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
 import {
@@ -11,6 +12,7 @@ import {
   loadAdvice,
 } from "../lib/metrics";
 import type { LoadSnapshot } from "../lib/types";
+import { useSettingsStore } from "../stores/settingsStore";
 
 /** 自动刷新间隔。3 秒足够看出趋势，又不至于把服务器刷烦。 */
 const REFRESH_MS = 3000;
@@ -59,6 +61,21 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
   const [auto, setAuto] = useState(true);
   /** CPU 使用率历史，用来画右侧那条小折线 */
   const [history, setHistory] = useState<number[]>([]);
+
+  // 「高级监控 → 网络接口」里勾选的网卡。空 = 全部显示；
+  // 两边共用 settings 里的同一个字段，不另存一份，免得改了一边另一边不认。
+  const monitorInterfaces = useSettingsStore((s) => s.settings.monitorInterfaces);
+  const selectedNets = useMemo(
+    () => new Set(parseInterfaces(monitorInterfaces)),
+    [monitorInterfaces],
+  );
+  const visibleNets = useMemo(
+    () =>
+      (state.snapshot?.nets ?? []).filter(
+        (net) => selectedNets.size === 0 || selectedNets.has(net.name),
+      ),
+    [state.snapshot, selectedNets],
+  );
 
   /** 防止慢请求叠起来：3 秒一次，但一次采样要 0.5 秒 + 往返 */
   const inFlight = useRef(false);
@@ -279,13 +296,23 @@ export default function LoadPanel({ sessionId, active, onClose }: Props) {
           <section className="load-card">
             <header className="load-card__head">
               <span className="load-card__name">网络</span>
-              <span className="load-card__hint">{(snapshot.windowMs / 1000).toFixed(1)} 秒窗口</span>
+              <span className="load-card__hint">
+                {selectedNets.size > 0 ? `已选 ${selectedNets.size} 张 · ` : ""}
+                {(snapshot.windowMs / 1000).toFixed(1)} 秒窗口
+              </span>
             </header>
-            {snapshot.nets.length === 0 ? (
-              <p className="load-card__hint">读不到网卡（/proc/net/dev 为空）</p>
+            {selectedNets.size > 0 ? (
+              <p className="load-card__hint">只看勾选的网卡，在「高级」面板里改</p>
+            ) : null}
+            {visibleNets.length === 0 ? (
+              <p className="load-card__hint">
+                {snapshot.nets.length === 0
+                  ? "读不到网卡（/proc/net/dev 为空）"
+                  : "勾选的网卡当前没有数据"}
+              </p>
             ) : (
               <ul className="load-list">
-                {snapshot.nets.map((net) => (
+                {visibleNets.map((net) => (
                   <li className="load-row load-row--net" key={net.name}>
                     <span className="load-row__name">{net.name}</span>
                     <span className="load-row__rate">↓ {formatRate(net.rxBps)}</span>

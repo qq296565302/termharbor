@@ -211,6 +211,18 @@ export interface Settings {
   scrollback: number;
   /** 界面外观。`system` = 跟随系统 */
   uiTheme: UiTheme;
+  /** 终端背景图的本机绝对路径，空串 = 不显示 */
+  backgroundImage: string;
+  /** 背景图不透明度 0–100 */
+  backgroundOpacity: number;
+  /** 是否显示独立命令输入栏 */
+  commandBar: boolean;
+  /** 多文件传输时自动打包/解包 */
+  autoPack: boolean;
+  /** 触发自动打包的文件数阈值 */
+  packThreshold: number;
+  /** 负载看板显示的网卡，逗号分隔；空串 = 全部 */
+  monitorInterfaces: string;
 }
 
 /** 对应 `snippets::EnvStatus` */
@@ -371,4 +383,86 @@ export interface McpAuditView {
   selfPid: number;
   /** 本进程启动时刻。早于它的记录属于上一次运行，pid 对不上不算异常 */
   startedAtMs: number;
+}
+
+/** 命令 / 路径历史。后端不设条数上限，重复值会合并并累加使用次数。 */
+export interface HistoryEntry {
+  id: string;
+  kind: "command" | "path";
+  value: string;
+  /** 没关联连接时为空串 */
+  connectionId: string;
+  tsMs: number;
+  useCount: number;
+}
+
+/** 高级监控：网卡详情 */
+export interface NetInterfaceInfo {
+  name: string;
+  ipv4: string;
+  ipv6: string;
+  mac: string;
+  state: string;
+  rxBytes: number;
+  txBytes: number;
+  rxErrors: number;
+  txErrors: number;
+}
+
+export interface DiskInfo {
+  filesystem: string;
+  mount: string;
+  sizeKb: number;
+  usedKb: number;
+  availKb: number;
+  usePercent: number;
+}
+
+export interface SystemInfo {
+  hostname: string;
+  osName: string;
+  kernel: string;
+  arch: string;
+  cpuModel: string;
+  cpuCores: number;
+  uptimeSec: number;
+  totalMemKb: number;
+  totalSwapKb: number;
+  loadAvg: number[];
+  processCount: number;
+  loggedUsers: number;
+  virtualization: string;
+  disks: DiskInfo[];
+}
+
+export interface ProcessInfo {
+  pid: number;
+  ppid: number;
+  user: string;
+  stat: string;
+  cpuPercent: number;
+  memPercent: number;
+  memKb: number;
+  elapsed: string;
+  command: string;
+}
+
+export interface NetConnection {
+  proto: string;
+  state: string;
+  localAddr: string;
+  remoteAddr: string;
+  pid: number;
+  process: string;
+  /** listen | established | other */
+  kind: string;
+}
+
+/** 一次 exec 采回来的全部高级监控数据 */
+export interface AdvancedSnapshot {
+  info: SystemInfo;
+  interfaces: NetInterfaceInfo[];
+  processes: ProcessInfo[];
+  connections: NetConnection[];
+  warnings: string[];
 }
