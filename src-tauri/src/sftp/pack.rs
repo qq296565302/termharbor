@@ -841,7 +841,7 @@ mod tests {
 
         let archive = dir.join("bundle.tar.gz");
         let out = dir.join("out");
-        create_archive(&[src.clone()], &archive, &no_cancel()).unwrap();
+        create_archive(std::slice::from_ref(&src), &archive, &no_cancel()).unwrap();
         extract_archive(&archive, &out, &no_cancel()).unwrap();
 
         assert_eq!(std::fs::read(out.join("src/a.txt")).unwrap(), b"AAA");
@@ -861,7 +861,7 @@ mod tests {
         std::fs::create_dir_all(src.join("nested")).unwrap();
         std::fs::write(src.join("nested/file.txt"), b"x").unwrap();
         let archive = dir.join("bundle.tar.gz");
-        create_archive(&[src.clone()], &archive, &no_cancel()).unwrap();
+        create_archive(std::slice::from_ref(&src), &archive, &no_cancel()).unwrap();
 
         let file = std::fs::File::open(&archive).unwrap();
         let mut tar = Archive::new(GzDecoder::new(file));
@@ -962,6 +962,7 @@ mod tests {
     }
 
     /// 8. 符号链接在打包时被跳过（不跟随、不进归档）。
+    ///
     /// Windows 非开发者模式建不了符号链接，这种环境下降级为不测，不算失败。
     #[cfg(windows)]
     fn make_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
@@ -987,7 +988,7 @@ mod tests {
         }
 
         let archive = dir.join("bundle.tar.gz");
-        create_archive(&[src.clone()], &archive, &no_cancel()).unwrap();
+        create_archive(std::slice::from_ref(&src), &archive, &no_cancel()).unwrap();
 
         let file = std::fs::File::open(&archive).unwrap();
         let mut tar = Archive::new(GzDecoder::new(file));
