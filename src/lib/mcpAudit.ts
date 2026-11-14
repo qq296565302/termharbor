@@ -13,6 +13,8 @@ export const REASON_LABEL: Record<string, string> = {
   tool_not_allowed: "这个工具没开",
   path_not_allowed: "路径不在范围内",
   secret_path: "凭据类文件默认挡",
+  system_path_write: "写系统位置，等你确认",
+  launch_token_rejected: "启动凭证不匹配",
   command_not_allowed: "命令不在白名单",
   compound_command: "命令写法问题",
   empty_command: "空命令",

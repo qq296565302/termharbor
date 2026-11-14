@@ -325,7 +325,21 @@ export interface McpConnectionPolicy {
   paths: string[];
   /** 放开 SSH 私钥 / shadow / 云凭据这类文件，默认关。 */
   allowSecretFiles: boolean;
+  /** 完全信任 = 关掉高危写入闸门。老配置默认 true，升级不静默收窄。 */
+  fullTrust: boolean;
+  /** 三个独立开关，默认全开；可单独关掉某一类能力。 */
+  allowExec: boolean;
+  allowWrite: boolean;
+  allowUpload: boolean;
   exec: McpExecPolicy;
+}
+
+/** 用户点过「允许这一次」的记录。空 connectionId 表示对所有连接生效。 */
+export interface McpApproval {
+  connectionId: string;
+  scope: string;
+  untilMs: number;
+  grantedAtMs: number;
 }
 
 export interface McpConfig {
@@ -338,6 +352,11 @@ export interface McpConfig {
    */
   requireLiveSession: boolean;
   connections: Record<string, McpConnectionPolicy>;
+  /** stdio 启动凭证。空串 = 老配置（放行但提示生成）。 */
+  hostToken: string;
+  /** 一次高危写入放行管多久（分钟）。0 = 本次客户端会话。 */
+  approvalTtlMinutes: number;
+  approvals: McpApproval[];
 }
 
 export interface McpConnectionBrief {

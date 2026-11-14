@@ -21,6 +21,7 @@ import type {
   McpConfigView,
   McpConnectionPolicy,
 } from "../lib/types";
+import McpApprovalCard from "./McpApprovalCard";
 
 const TOOLS: { id: string; label: string; hint: string }[] = [
   { id: "list_connections", label: "列连接", hint: "查看有哪些可用服务器" },
@@ -35,25 +36,40 @@ const TOOLS: { id: string; label: string; hint: string }[] = [
   { id: "exec", label: "执行命令", hint: "执行单条命令" },
 ];
 
-function emptyPolicy(): McpConnectionPolicy {
+function emptyPolicy(fullTrust = false): McpConnectionPolicy {
   return {
     enabled: false,
     tools: [],
     paths: [],
     allowSecretFiles: false,
+    // 新配置默认开边界；v1 老配置由 normalize 传 true，升级不静默收窄。
+    fullTrust,
+    allowExec: true,
+    allowWrite: true,
+    allowUpload: true,
     exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
   };
 }
 
 function normalize(view: McpConfigView): McpConfig {
+  // 后端 ConfigStore::load 已经把 v1 老配置的 fullTrust 补成 true 并升到 v2，
+  // 前端不要再按 version 猜一次（那样会把刚迁移完的配置误判成新配置）。
+  // 这里 base 只用于「配置里压根没有这台连接」的情况：新启用的一律默认开边界。
+  const base = emptyPolicy();
   const connections: Record<string, McpConnectionPolicy> = {};
   for (const item of view.connections) {
     const existing = view.config.connections[item.id] ?? view.config.connections[item.name];
     connections[item.id] = existing
-      ? { ...emptyPolicy(), ...existing, exec: { ...emptyPolicy().exec, ...existing.exec } }
-      : emptyPolicy();
+      ? { ...base, ...existing, exec: { ...base.exec, ...existing.exec } }
+      : { ...base };
   }
-  return { ...view.config, connections };
+  return {
+    ...view.config,
+    hostToken: view.config.hostToken ?? "",
+    approvalTtlMinutes: view.config.approvalTtlMinutes ?? 0,
+    approvals: view.config.approvals ?? [],
+    connections,
+  };
 }
 
 function toggle(list: string[], value: string): string[] {
@@ -71,6 +87,12 @@ function summarize(policy: McpConnectionPolicy): string {
     );
   }
   if (policy.allowSecretFiles) parts.push("含凭据文件");
+  parts.push(policy.fullTrust ? "完全信任" : "已开写入边界");
+  const disabled: string[] = [];
+  if (!policy.allowExec) disabled.push("执行");
+  if (!policy.allowWrite) disabled.push("写");
+  if (!policy.allowUpload) disabled.push("上传");
+  if (disabled.length > 0) parts.push(`已关 ${disabled.join("/")}`);
   return parts.join(" · ");
 }
 
@@ -203,8 +225,11 @@ export default function McpSettings() {
 
   const copyHostConfig = async () => {
     const exe = "%LOCALAPPDATA%\\TermHarbor\\termharbor.exe";
+    // 凭证跟着宿主配置一起复制。没生成过就退回落配置（后端会放行但记警告）。
+    const args = ["--mcp"];
+    if (config?.hostToken) args.push("--mcp-token", config.hostToken);
     const text = JSON.stringify(
-      { mcpServers: { termharbor: { command: exe, args: ["--mcp"] } } },
+      { mcpServers: { termharbor: { command: exe, args } } },
       null,
       2,
     );
@@ -213,6 +238,17 @@ export default function McpSettings() {
       setError(null);
     } catch {
       setError("复制失败，请手动填写宿主配置");
+    }
+  };
+
+  /** 换凭证后旧宿主配置立刻失效，所以顺手提醒重新复制一次。 */
+  const regenToken = async () => {
+    try {
+      const token = await call<string>("mcp_token_regenerate");
+      setConfig((current) => (current ? { ...current, hostToken: token } : current));
+      setError(null);
+    } catch (err) {
+      setError(fromUnknown(err).message);
     }
   };
 
@@ -281,6 +317,53 @@ export default function McpSettings() {
         </div>
       ) : null}
 
+      {config ? (
+        <div className="mcp__gate mcp__security">
+          <div className="mcp__gate-switch">
+            <span>stdio 启动凭证</span>
+            <span className={`mcp__gate-state${config.hostToken ? "" : " is-off"}`}>
+              {config.hostToken ? "已生成" : "未配置"}
+            </span>
+          </div>
+          <p className="mcp__gate-hint">
+            宿主拉起 MCP 时要带上这个凭证，手工启动、不带凭证的进程会被直接拒绝。
+            老配置没生成过也能用，但每次启动会记一条警告。重新生成后请再点一次「复制宿主配置」。
+          </p>
+          <div className="mcp__quick">
+            <button type="button" className="btn btn--small" onClick={() => void regenToken()}>
+              {config.hostToken ? "重新生成凭证" : "生成凭证"}
+            </button>
+            {config.hostToken ? (
+              <code className="mcp__token" title="只显示前 8 位，完整值在复制的宿主配置里">
+                {config.hostToken.slice(0, 8)}…
+              </code>
+            ) : null}
+          </div>
+          <label className="mcp__ttl">
+            <span>一次放行有效时长</span>
+            <select
+              className="mcp__ttl-select"
+              value={config.approvalTtlMinutes}
+              onChange={(event) =>
+                setConfig((current) =>
+                  current
+                    ? { ...current, approvalTtlMinutes: Number(event.target.value) }
+                    : current,
+                )
+              }
+            >
+              <option value={0}>本次客户端会话</option>
+              <option value={10}>10 分钟</option>
+              <option value={60}>1 小时</option>
+              <option value={480}>8 小时</option>
+            </select>
+          </label>
+          <p className="mcp__gate-hint">
+            高危写入被拦下后，点一次「允许这一次」在这段时间内不再重复问；关掉客户端或换机器会重新问。
+          </p>
+        </div>
+      ) : null}
+
       {config && enabledCount === 0 && connections.length > 0 ? (
         <p className="settings__notice mcp__quick">
           当前所有连接都未开放，智能体还看不到任何服务器。
@@ -329,6 +412,51 @@ export default function McpSettings() {
 
                   {policy.enabled ? (
                     <div className="mcp__body">
+                      <div className="mcp__switches">
+                        <label
+                          className="mcp__switch mcp__switch--trust"
+                          title="开边界后，写 systemd 单元、定时任务、提权或登录配置会先拦一下让你确认；读文件和写业务目录照旧"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!policy.fullTrust}
+                            onChange={(event) =>
+                              patch(item.id, { fullTrust: !event.target.checked })
+                            }
+                          />
+                          写入边界
+                        </label>
+                        <label className="mcp__switch">
+                          <input
+                            type="checkbox"
+                            checked={policy.allowExec}
+                            onChange={(event) =>
+                              patch(item.id, { allowExec: event.target.checked })
+                            }
+                          />
+                          允许执行
+                        </label>
+                        <label className="mcp__switch">
+                          <input
+                            type="checkbox"
+                            checked={policy.allowWrite}
+                            onChange={(event) =>
+                              patch(item.id, { allowWrite: event.target.checked })
+                            }
+                          />
+                          允许写
+                        </label>
+                        <label className="mcp__switch">
+                          <input
+                            type="checkbox"
+                            checked={policy.allowUpload}
+                            onChange={(event) =>
+                              patch(item.id, { allowUpload: event.target.checked })
+                            }
+                          />
+                          允许上传
+                        </label>
+                      </div>
                       <div className="mcp__summary">
                         <span className="mcp__caption">{summarize(policy)}</span>
                         <button
@@ -552,6 +680,14 @@ export default function McpSettings() {
             })
           )}
         </div>
+      ) : null}
+
+      {config ? (
+        <McpApprovalCard
+          entries={calls}
+          approvals={config.approvals}
+          onChanged={() => void load()}
+        />
       ) : null}
 
       {calls.length > 0 ? (

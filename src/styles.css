@@ -4415,3 +4415,68 @@ a:focus-visible,
   flex: 0 0 auto;
   width: 100%;
 }
+
+/* ---------------------------------------------------------------- MCP 安全设置 */
+.mcp__security {
+  margin-top: 12px;
+}
+
+.mcp__token {
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg-sunken);
+}
+
+.mcp__ttl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: var(--fs-xs);
+  color: var(--text);
+}
+
+.mcp__ttl-select {
+  height: 24px;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+}
+
+.mcp__switches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.mcp__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mcp__switch input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.mcp__switch--trust {
+  color: #12805c;
+}

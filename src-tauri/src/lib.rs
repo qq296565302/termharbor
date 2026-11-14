@@ -236,6 +236,9 @@ pub fn run() {
             commands::mcp::mcp_audit_recent,
             commands::mcp::mcp_allow_command,
             commands::mcp::mcp_live_connections,
+            commands::mcp::mcp_approval_grant,
+            commands::mcp::mcp_approval_revoke,
+            commands::mcp::mcp_token_regenerate,
         ])
         .build(tauri::generate_context!())
         .expect("TermHarbor 启动失败")
@@ -245,6 +248,16 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = handle.try_state::<AppState>() {
                     crate::lease::clear(&state.paths.product_dir);
+                    // 「本次客户端会话」的放行到此为止。固定时长的放行保留到自然过期；
+                    // 强杀来不及走这里，还有配置里的 8 小时兜底。
+                    let store = crate::mcp::config::ConfigStore::new(&crate::mcp::data_dir(
+                        &state.paths.product_dir,
+                    ));
+                    let mut cfg = store.load();
+                    cfg.clear_session_approvals();
+                    if let Err(err) = store.save(&cfg) {
+                        tracing::warn!(error = %err, "退出时清理 MCP 放行记录失败");
+                    }
                 }
             }
         });

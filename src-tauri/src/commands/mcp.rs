@@ -13,7 +13,9 @@ use crate::error::{AppError, AppResult};
 use crate::mcp::audit::{AuditEntry, AuditLog};
 #[cfg(test)]
 use crate::mcp::config::ConnectionPolicy;
-use crate::mcp::config::{ConfigStore, McpConfig, ALL_TOOLS, TOOL_EXEC};
+use crate::mcp::config::{
+    ConfigStore, McpConfig, ALL_TOOLS, APPROVAL_SCOPE_SYSTEM_WRITE, TOOL_EXEC,
+};
 use crate::mcp::exec::validate_command;
 use crate::state::AppState;
 
@@ -81,9 +83,66 @@ pub async fn mcp_config_get(state: State<'_, AppState>) -> AppResult<McpConfigVi
 
 /// 全量写回白名单。写之前在服务端再校验一遍。
 #[tauri::command]
-pub fn mcp_config_set(state: State<'_, AppState>, config: McpConfig) -> AppResult<()> {
+pub fn mcp_config_set(state: State<'_, AppState>, mut config: McpConfig) -> AppResult<()> {
+    // hostToken / approvals 由服务端单独管理，前端整份提交时不能把它们冲掉：
+    // 否则用户刚点过「允许这一次」，转头改个开关就把放行记录写没了。
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    let current = store.load();
+    config.host_token = current.host_token;
+    config.approvals = current.approvals;
     validate_config(&config)?;
-    ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir)).save(&config)
+    store.save(&config)
+}
+
+/// 用户在前台点「允许这一次」。
+///
+/// 审计记录里存的是**连接名**，但名字不唯一（库里没有唯一约束），
+/// 靠名字放行会让重名的两台机器一起被放开，所以这里先解析成唯一 id。
+#[tauri::command]
+pub async fn mcp_approval_grant(
+    state: State<'_, AppState>,
+    connection: String,
+    scope: Option<String>,
+) -> AppResult<()> {
+    let scope = scope.unwrap_or_else(|| APPROVAL_SCOPE_SYSTEM_WRITE.to_string());
+    if scope != APPROVAL_SCOPE_SYSTEM_WRITE {
+        return Err(AppError::validation("不支持的放行作用域"));
+    }
+
+    let rows = state
+        .db
+        .call(|conn| crate::storage::connections::list(conn, None))
+        .await?;
+    let id = rows
+        .iter()
+        .find(|record| record.id == connection || record.name == connection)
+        .map(|record| record.id.clone())
+        .ok_or_else(|| AppError::validation("找不到这台连接，无法放行"))?;
+
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    let mut config = store.load();
+    config.grant_approval(&id, &scope, crate::state::now_millis());
+    store.save(&config)
+}
+
+/// 撤销全部放行。用户关掉客户端前想提前收回时用。
+#[tauri::command]
+pub fn mcp_approval_revoke(state: State<'_, AppState>) -> AppResult<()> {
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    let mut config = store.load();
+    config.approvals.clear();
+    store.save(&config)
+}
+
+/// 重新生成 stdio 启动凭证。返回新 token，前端据此拼宿主配置。
+#[tauri::command]
+pub fn mcp_token_regenerate(state: State<'_, AppState>) -> AppResult<String> {
+    let store = ConfigStore::new(&crate::mcp::data_dir(&state.paths.product_dir));
+    let mut config = store.load();
+    let token = crate::mcp::launch::generate_token();
+    config.host_token = token.clone();
+    store.save(&config)?;
+    Ok(token)
 }
 
 /// 设置页一次显示多少条调用记录。
@@ -174,7 +233,9 @@ pub fn mcp_allow_command(
 
 /// 配置决定安全边界，服务端必须自己再验一次。
 fn validate_config(config: &McpConfig) -> AppResult<()> {
-    if config.version != 1 {
+    // v1 = 0.3.x 及更早；v2 = 0.4.0 起多了凭证、放行与细粒度开关。
+    // 两者都要能读：老配置里没有新字段，serde 的 default 会补齐。
+    if !matches!(config.version, 1 | 2) {
         return Err(AppError::validation("不支持的 MCP 配置版本"));
     }
 
@@ -264,6 +325,7 @@ mod tests {
                     allow: vec!["df -h".into()],
                     ..Default::default()
                 },
+                ..Default::default()
             },
         );
         assert!(validate_config(&cfg).is_ok());

@@ -15,6 +15,8 @@ pub mod config;
 pub mod context;
 pub mod exec;
 pub mod jsonrpc;
+pub mod launch;
+pub mod paths;
 pub mod server;
 pub mod tools;
 
@@ -86,6 +88,35 @@ pub async fn serve_stdio() {
         data_dir = %ctx.paths().data_dir.display(),
         "MCP 服务启动"
     );
+
+    // 启动凭证（0.4.0）。stdio 没有「对端是谁」的概念，宿主配置里带的 token 是
+    // 唯一能区分「配置里那个宿主」和「随手 spawn 的进程」的信号；校验必须发生在
+    // 服务任何请求之前。老配置没有 token 时放行但留警告，升级不静默把人挡在门外。
+    let args: Vec<String> = std::env::args().collect();
+    let env_token = std::env::var("TERMHARBOR_MCP_TOKEN").ok();
+    let status = launch::verify(&ctx.config().load().host_token, &args, env_token);
+
+    // 放行和拒绝都留一条审计：前台「最近调用」要能看见这次服务是谁拉起来的。
+    let mut entry = if status == launch::LaunchStatus::Rejected {
+        audit::AuditEntry::denied("mcp_start", "-", "", "stdio", "launch_token_rejected")
+    } else {
+        audit::AuditEntry::allowed("mcp_start", "-", "", "stdio")
+    };
+    entry.result = launch::audit_note(status.clone()).to_string();
+    ctx.audit().record(&entry);
+
+    match status {
+        launch::LaunchStatus::Rejected => {
+            eprintln!("[termharbor-mcp] 启动凭证不匹配，已拒绝服务");
+            return;
+        }
+        launch::LaunchStatus::NotConfigured => {
+            eprintln!(
+                "[termharbor-mcp] 未配置启动凭证：老配置兼容放行，建议到「设置 → MCP 接入」生成凭证"
+            );
+        }
+        launch::LaunchStatus::Verified => {}
+    }
 
     let server = Server::new(ctx);
     let stdin = io::stdin();

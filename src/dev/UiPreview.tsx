@@ -138,15 +138,22 @@ const responses: Record<string, unknown> = {
 
 const mcpView: McpConfigView = {
   config: {
-    version: 1,
+    version: 2,
     defaultEnabled: false,
     requireLiveSession: true,
+    hostToken: "a1b2c3d4",
+    approvalTtlMinutes: 0,
+    approvals: [],
     connections: {
       c1: {
         enabled: true,
         tools: [],
         paths: [],
         allowSecretFiles: false,
+        fullTrust: false,
+        allowExec: true,
+        allowWrite: true,
+        allowUpload: true,
         exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
       },
       c2: {
@@ -154,6 +161,10 @@ const mcpView: McpConfigView = {
         tools: ["sftp_list", "exec"],
         paths: ["/var/log"],
         allowSecretFiles: false,
+        fullTrust: true,
+        allowExec: false,
+        allowWrite: true,
+        allowUpload: true,
         exec: { allow: ["df -h", "journalctl -n 50"], timeoutSecs: 60, maxOutputKb: 64 },
       },
       c3: {
@@ -161,6 +172,10 @@ const mcpView: McpConfigView = {
         tools: [],
         paths: [],
         allowSecretFiles: false,
+        fullTrust: false,
+        allowExec: true,
+        allowWrite: true,
+        allowUpload: true,
         exec: { allow: [], timeoutSecs: 60, maxOutputKb: 64 },
       },
     },

@@ -115,6 +115,9 @@ pub enum DenyReason {
     PathNotAllowed,
     /// 路径是凭据载体（私钥、shadow、云凭据），本地策略默认挡
     SecretPath,
+    /// 往系统会自动执行的位置写文件（systemd unit、cron、sudoers 等），
+    /// 需要用户在前台点一次「允许这一次」；不是权限没开，别让用户去翻白名单。
+    SystemPathWrite,
     EmptyCommand,
     CompoundCommand,
     CommandNotAllowed,
@@ -141,6 +144,7 @@ impl DenyReason {
             DenyReason::ToolNotAllowed => "tool_not_allowed",
             DenyReason::PathNotAllowed => "path_not_allowed",
             DenyReason::SecretPath => "secret_path",
+            DenyReason::SystemPathWrite => "system_path_write",
             DenyReason::EmptyCommand => "empty_command",
             DenyReason::CompoundCommand => "compound_command",
             DenyReason::CommandNotAllowed => "command_not_allowed",

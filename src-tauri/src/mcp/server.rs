@@ -39,6 +39,8 @@ load_snapshot 看负载、exec 执行命令。\
 4. 被拒绝时先看清 reason：**compound_command 是命令写法问题**，设置里没有对应开关，\
    按提示改写命令重试一次即可，不要让用户去改配置；**no_live_session 是「没连着」**，\
    让用户在客户端里连上这台机器（或打开它的文件面板）即可，也不要让用户去改配置；\
+   **system_path_write 是用户本人确认**，让用户在「设置 → MCP 接入 → 待确认操作」\
+   点「允许这一次」，然后只重试这一次，不要反复重试、不要换路径绕过；\
    其余（connection_disabled / tool_not_allowed / command_not_allowed / path_not_allowed / \
    secret_path）才是权限没开，把原因原样转告用户，让用户去「设置 → MCP 接入」调整。\
    任何情况下都不要用别的工具或拼命令绕过。\

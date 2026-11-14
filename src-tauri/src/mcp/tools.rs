@@ -25,6 +25,7 @@ use super::context::Context;
 use super::exec::{validate_command, DenyReason, Liveness};
 use super::jsonrpc::{RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::error::{AppError, ErrCode};
+use crate::mcp::paths::WriteOp;
 use crate::monitor::load::LoadSnapshot;
 use crate::redact::{redact, redact_command};
 use crate::state::now_millis;
@@ -381,6 +382,18 @@ pub async fn call(ctx: &Context, name: &str, arguments: Option<&Value>) -> Resul
             reason: DenyReason::NoLiveSession(why),
             ..
         } => Ok(failed(no_live_session(why))),
+        // 高危写入必须和「权限没开」区分开：这里不需要改任何白名单，
+        // 只要用户在前台点一次。文案要说清点哪里、以及不要反复重试。
+        Outcome::Denied {
+            reason: DenyReason::SystemPathWrite,
+            ..
+        } => Ok(failed(
+            "目标路径属于系统会自动执行的位置（systemd 单元、定时任务、提权或登录配置等），\
+             写入这类位置需要用户本人确认。这不是权限没开，不用改任何白名单。\
+             请让用户在客户端「设置 → MCP 接入 → 待确认操作」里点「允许这一次」，\
+             然后**只重试这一次**。在用户确认之前不要反复重试、不要换工具、\
+             也不要把文件改写到别的路径来绕过。",
+        )),
         Outcome::Denied { reason, .. } => Ok(failed(format!(
             "已被本地配置拒绝（{}）。这台机器或这个工具没有对 MCP 开放。\
              请让用户在「设置 → MCP 接入」里放开；不要尝试改用别的方式达到同样目的。",
@@ -420,6 +433,11 @@ fn gated(
     if !cfg.allows_tool(policy, tool) {
         return Err(DenyReason::ToolNotAllowed);
     }
+    // 细粒度开关：只读工具不看它，写/传/执行各自能单独关掉。
+    // 放在租约之前，因为这是长期授权，跟「此刻连没连」无关。
+    if !McpConfig::allows_capability(policy, tool) {
+        return Err(DenyReason::ToolNotAllowed);
+    }
     if !ctx.enforces_lease() || !cfg.require_live_session {
         return Ok(policy.clone());
     }
@@ -455,6 +473,35 @@ fn path_gate(policy: &ConnectionPolicy, path: &str) -> Result<(), DenyReason> {
         return Err(DenyReason::SecretPath);
     }
     Ok(())
+}
+
+/// 写类操作专用闸门：原有路径检查之后，再判「是不是往系统会自动执行的位置写」。
+///
+/// 和 [`path_gate`] 分开是为了不误伤读：`cat` 一个 unit 文件排查问题照旧，
+/// 现有凭据黑名单管的是「读到它」，这里管的是「写进去」。
+/// 完全信任的机器整道跳过；其它机器命中后，只要用户点过一次放行就放行到会话结束。
+fn write_gate(
+    cfg: &McpConfig,
+    policy: &ConnectionPolicy,
+    connection_id: &str,
+    path: &str,
+    op: crate::mcp::paths::WriteOp,
+) -> Result<(), DenyReason> {
+    path_gate(policy, path)?;
+    if policy.full_trust {
+        return Ok(());
+    }
+    if crate::mcp::paths::system_path_reason(path, op).is_none() {
+        return Ok(());
+    }
+    if cfg.has_approval(
+        connection_id,
+        crate::mcp::config::APPROVAL_SCOPE_SYSTEM_WRITE,
+        now_millis(),
+    ) {
+        return Ok(());
+    }
+    Err(DenyReason::SystemPathWrite)
 }
 
 async fn list_connections(ctx: &Context) -> Result<Outcome, RpcError> {
@@ -725,7 +772,7 @@ async fn sftp_write(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if let Err(reason) = path_gate(&policy, &path) {
+    if let Err(reason) = write_gate(&cfg, &policy, &record.id, &path, WriteOp::Write) {
         return Ok(denied(&record, reason));
     }
 
@@ -783,7 +830,7 @@ async fn sftp_upload(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if let Err(reason) = path_gate(&policy, &remote_path) {
+    if let Err(reason) = write_gate(&cfg, &policy, &record.id, &remote_path, WriteOp::Upload) {
         return Ok(denied(&record, reason));
     }
 
@@ -921,7 +968,7 @@ async fn sftp_mkdir(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome,
         Ok(policy) => policy,
         Err(reason) => return Ok(denied(&record, reason)),
     };
-    if let Err(reason) = path_gate(&policy, &path) {
+    if let Err(reason) = write_gate(&cfg, &policy, &record.id, &path, WriteOp::Write) {
         return Ok(denied(&record, reason));
     }
 
@@ -964,7 +1011,9 @@ async fn sftp_rename(ctx: &Context, arguments: Option<&Value>) -> Result<Outcome
     };
     // 两头都要过：只校验 from 的话，`rename("/tmp/a", "/etc/passwd")` 就绕过去了；
     // `rename("/home/u/.ssh/id_rsa", "/tmp/x")` 这种平移也一样要拦。
-    if let Err(reason) = path_gate(&policy, &from).and_then(|()| path_gate(&policy, &to)) {
+    if let Err(reason) = write_gate(&cfg, &policy, &record.id, &from, WriteOp::Rename)
+        .and_then(|()| write_gate(&cfg, &policy, &record.id, &to, WriteOp::Rename))
+    {
         return Ok(denied(&record, reason));
     }
 
@@ -1484,5 +1533,110 @@ mod tests {
         let line = describe(&err);
         assert!(line.contains("SFTP_NOT_FOUND"));
         assert!(line.contains("目录不存在"));
+    }
+
+    // ---------------------------------------------------------------- 高危写入闸门
+
+    fn bounded_policy() -> ConnectionPolicy {
+        ConnectionPolicy {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    /// 完全信任的机器整道跳过；开了边界的机器写 unit 必须停下来等确认。
+    #[test]
+    fn system_write_needs_approval_unless_full_trust() {
+        let cfg = McpConfig::default();
+        let trusted = ConnectionPolicy {
+            enabled: true,
+            full_trust: true,
+            ..Default::default()
+        };
+        let path = "/etc/systemd/system/kantai.service";
+
+        assert_eq!(
+            write_gate(&cfg, &trusted, "c1", path, WriteOp::Write),
+            Ok(())
+        );
+        assert_eq!(
+            write_gate(&cfg, &bounded_policy(), "c1", path, WriteOp::Write),
+            Err(DenyReason::SystemPathWrite)
+        );
+    }
+
+    /// 点一次放行只管那一台机器，同会话内换个高危路径也不用再点。
+    #[test]
+    fn one_approval_covers_the_session_for_that_machine() {
+        let mut cfg = McpConfig::default();
+        cfg.grant_approval(
+            "c1",
+            crate::mcp::config::APPROVAL_SCOPE_SYSTEM_WRITE,
+            crate::state::now_millis(),
+        );
+        assert_eq!(
+            write_gate(
+                &cfg,
+                &bounded_policy(),
+                "c1",
+                "/etc/crontab",
+                WriteOp::Write
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            write_gate(
+                &cfg,
+                &bounded_policy(),
+                "c1",
+                "/etc/systemd/system/x.service",
+                WriteOp::Write
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            write_gate(
+                &cfg,
+                &bounded_policy(),
+                "c2",
+                "/etc/crontab",
+                WriteOp::Write
+            ),
+            Err(DenyReason::SystemPathWrite)
+        );
+    }
+
+    /// 正常部署路径一次都不该打扰用户。
+    #[test]
+    fn ordinary_writes_never_prompt() {
+        let cfg = McpConfig::default();
+        for path in [
+            "/opt/kantai/app.js",
+            "/var/lib/kantai/db.sqlite",
+            "/var/log/nginx/error.log",
+            "/tmp/x/update.sh",
+        ] {
+            assert_eq!(
+                write_gate(&cfg, &bounded_policy(), "c1", path, WriteOp::Write),
+                Ok(()),
+                "不该拦：{path}"
+            );
+        }
+    }
+
+    /// rename 的目标也要过闸门，否则「先写 /tmp 再挪进 systemd」就绕过去了。
+    #[test]
+    fn rename_to_system_path_is_also_gated() {
+        let cfg = McpConfig::default();
+        assert_eq!(
+            write_gate(
+                &cfg,
+                &bounded_policy(),
+                "c1",
+                "/etc/systemd/system/x.service",
+                WriteOp::Rename
+            ),
+            Err(DenyReason::SystemPathWrite)
+        );
     }
 }
