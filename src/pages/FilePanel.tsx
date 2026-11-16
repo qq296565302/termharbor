@@ -91,6 +91,17 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [home, setHome] = useState("");
   const [path, setPath] = useState("/");
+  /**
+   * 浏览历史 + 游标，地址栏的前进/后退靠它。
+   *
+   * 用 ref 镜像游标而不是只靠 state：`navigate` 里要读到"当前在哪一格"，
+   * 而它被 useCallback 缓存，闭包里拿到的是旧值 —— 这是最容易写错的一处。
+   */
+  const [history, setHistory] = useState<string[]>(["/"]);
+  const [histIndex, setHistIndex] = useState(0);
+  const histRef = useRef(0);
+  /** 地址栏是否切换成"手输路径"模式；null = 显示面包屑 */
+  const [editingPath, setEditingPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<RemoteEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -231,6 +242,47 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     [connectionId],
   );
 
+  /**
+   * 用户主动导航：加载 + 记一笔历史。
+   *
+   * 和 `load` 分开是有意的：刷新列表、上传后重载、重命名后重载都不该进历史，
+   * 否则连点两次刷新，后退键就会把人送回同一个目录。
+   */
+  const navigate = useCallback(
+    async (target: string, push = true) => {
+      const sid = sessionRef.current;
+      if (!sid) return;
+      await load(sid, target);
+      if (!push) return;
+
+      const at = histRef.current;
+      setHistory((prev) => {
+        const next = [...prev.slice(0, at + 1), target];
+        histRef.current = next.length - 1;
+        setHistIndex(histRef.current);
+        return next;
+      });
+    },
+    [load],
+  );
+
+  /** 前进/后退。失败就停在原地并说明原因，别把游标挪到一个没加载成功的目录。 */
+  const goHistory = async (delta: number) => {
+    const sid = sessionRef.current;
+    if (!sid) return;
+    const next = histRef.current + delta;
+    if (next < 0 || next >= history.length) return;
+
+    try {
+      await load(sid, history[next]);
+      histRef.current = next;
+      setHistIndex(next);
+      setNotice(null);
+    } catch (err) {
+      setNotice(remoteErrorNotice(err));
+    }
+  };
+
   const openSession = async (connectionId: string) => {
     setBusy(true);
     setNotice(null);
@@ -244,10 +296,15 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       // 登录 shell 默认就落在 $HOME，用它作为相对路径的基准
       shellCwd.current = opened.home;
       prevShellCwd.current = null;
-      await load(opened.sessionId, ROOT_PATH).catch(() =>
+      let landed = ROOT_PATH;
+      await load(opened.sessionId, ROOT_PATH).catch(() => {
         // 少数服务器（Windows OpenSSH）列不出根，退回家目录而不是留个空面板
-        load(opened.sessionId, opened.home),
-      );
+        landed = opened.home;
+        return load(opened.sessionId, opened.home);
+      });
+      histRef.current = 0;
+      setHistIndex(0);
+      setHistory([landed]);
     } catch (err) {
       const error = fromUnknown(err);
       // 首次连一台机器必须先在「连接」页确认指纹，这里给一句能照做的提示
@@ -266,6 +323,9 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     setSessionId(null);
     setEntries([]);
     setPath(ROOT_PATH);
+    histRef.current = 0;
+    setHistIndex(0);
+    setHistory([ROOT_PATH]);
     shellCwd.current = null;
     prevShellCwd.current = null;
     // 留一句提示：不然面板变成一个没有出口的空屏，用户不知道还能重连
@@ -319,7 +379,8 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
 
     void (async () => {
       try {
-        await load(sessionId, target);
+        // 跟着终端走也是一次导航，后退键应该能回到上一处
+        await navigate(target);
         prevShellCwd.current = cwd;
         shellCwd.current = target;
       } catch {
@@ -344,7 +405,7 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
     if (!sessionId) return;
     try {
       const parent = await call<string | null>("sftp_parent_of", { path });
-      if (parent) await load(sessionId, parent);
+      if (parent) await navigate(parent);
     } catch (err) {
       setNotice(remoteErrorNotice(err));
     }
@@ -628,51 +689,6 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
       ref={panelRef}
     >
       <div className="files-bar">
-        {/* 导航三件套装一组：它们作用于「当前目录」，和右边创建/上传不是一类操作 */}
-        <div className="files-bar__group">
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon btn--sm"
-            title="上一级"
-            aria-label="上一级"
-            onClick={goUp}
-            disabled={path === "/"}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M8 12.6V3.6" />
-              <path d="m4.4 7.2 3.6-3.6 3.6 3.6" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon btn--sm"
-            title="刷新"
-            aria-label="刷新"
-            onClick={refresh}
-            disabled={busy}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M13 8a5 5 0 1 1-1.6-3.7" />
-              <path d="M13 2.6V5h-2.4" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon btn--sm"
-            title={home ? `回家目录 ${home}` : "回家目录"}
-            aria-label="回家目录"
-            disabled={!home}
-            onClick={() => home && void load(sessionId, home)}
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2.5 7.6 8 3l5.5 4.6" />
-              <path d="M4.1 6.6v6.5h7.8V6.6" />
-            </svg>
-          </button>
-        </div>
-
-        <span className="files-bar__divider" />
-
         <button
           type="button"
           className="btn btn--ghost btn--sm"
@@ -755,20 +771,139 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         </button>
       </div>
 
-      <nav className="files-crumbs">
-        {crumbs.map((crumb, index) => (
-          <span key={crumb.path} className="files-crumbs__item">
-            {index > 0 ? <span className="files-crumbs__sep">/</span> : null}
-            <button
-              type="button"
-              className="files-crumbs__link"
-              onClick={() => void load(sessionId, crumb.path)}
+      {/* 地址栏：照资源管理器的样子 —— 左三颗导航键，中间是面包屑，
+          点空白处变成手输路径。刷新/回家也放这一排，工具条只留操作。 */}
+      <div className="files-addr">
+        <div className="files-addr__nav">
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title="后退"
+            aria-label="后退"
+            disabled={histIndex <= 0}
+            onClick={() => void goHistory(-1)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M10 3.4 5.4 8l4.6 4.6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title="前进"
+            aria-label="前进"
+            disabled={histIndex >= history.length - 1}
+            onClick={() => void goHistory(1)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M6 3.4 10.6 8 6 12.6" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon btn--sm"
+            title="上一级"
+            aria-label="上一级"
+            disabled={path === "/"}
+            onClick={() => void goUp()}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 12.6V3.6" />
+              <path d="m4.4 7.2 3.6-3.6 3.6 3.6" />
+            </svg>
+          </button>
+        </div>
+
+        <div
+          className={`files-addr__box${editingPath !== null ? " is-editing" : ""}`}
+          onClick={(event) => {
+            // 只有点到空白处才进编辑态；点面包屑上的按钮不该触发
+            if (event.target === event.currentTarget) setEditingPath(path);
+          }}
+        >
+          {editingPath !== null ? (
+            <input
+              className="files-addr__input"
+              autoFocus
+              value={editingPath}
+              spellCheck={false}
+              onChange={(event) => setEditingPath(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  const target = editingPath.trim();
+                  setEditingPath(null);
+                  if (target) {
+                    void navigate(target).catch((err: unknown) =>
+                      setNotice(remoteErrorNotice(err)),
+                    );
+                  }
+                }
+                if (event.key === "Escape") setEditingPath(null);
+              }}
+              onBlur={() => setEditingPath(null)}
+            />
+          ) : (
+            <div
+              className="files-crumbs"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) setEditingPath(path);
+              }}
             >
-              {crumb.label}
-            </button>
-          </span>
-        ))}
-      </nav>
+              {crumbs.map((crumb, index) => (
+                <span key={crumb.path} className="files-crumb">
+                  {index > 0 ? <span className="files-crumb__sep">›</span> : null}
+                  <button
+                    type="button"
+                    className={`files-crumb__link${index === crumbs.length - 1 ? " is-current" : ""}`}
+                    title={crumb.path}
+                    onClick={() => void navigate(crumb.path)}
+                  >
+                    {crumb.label}
+                  </button>
+                </span>
+              ))}
+              <button
+                type="button"
+                className="files-addr__edit"
+                title="编辑路径（也可以点空白处）"
+                aria-label="编辑路径"
+                onClick={() => setEditingPath(path)}
+              >
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M11.1 2.9a1.4 1.4 0 0 1 2 2l-7 7-2.7.7.7-2.7z" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon btn--sm"
+          title="刷新"
+          aria-label="刷新"
+          onClick={() => void refresh()}
+          disabled={busy}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+            <path d="M13 2.6V5h-2.4" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost btn--icon btn--sm"
+          title={home ? `回家目录 ${home}` : "回家目录"}
+          aria-label="回家目录"
+          disabled={!home}
+          onClick={() => home && void navigate(home)}
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.5 7.6 8 3l5.5 4.6" />
+            <path d="M4.1 6.6v6.5h7.8V6.6" />
+          </svg>
+        </button>
+      </div>
 
       <NoticeLine notice={notice} />
 
@@ -838,7 +973,12 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
                     className="files-card__main"
                     title={entry.isDir ? `进入 ${entry.name}` : `${entry.name}（双击下载）`}
                     onClick={() => {
-                      if (entry.isDir) void load(sessionId, entry.path);
+                      // 进目录是导航，要进历史（刷新/上传后的重载才用 load）
+                      if (entry.isDir) {
+                        void navigate(entry.path).catch((err: unknown) =>
+                          setNotice(remoteErrorNotice(err)),
+                        );
+                      }
                     }}
                     onDoubleClick={() => {
                       if (!entry.isDir) void download(entry);
@@ -916,7 +1056,11 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
                   type="button"
                   className={`files-name ${entry.isDir ? "is-dir" : ""}`}
                   onClick={() => {
-                    if (entry.isDir) void load(sessionId, entry.path);
+                    if (entry.isDir) {
+                      void navigate(entry.path).catch((err: unknown) =>
+                        setNotice(remoteErrorNotice(err)),
+                      );
+                    }
                   }}
                   title={entry.isDir ? "双击/点击进入目录" : entry.path}
                 >

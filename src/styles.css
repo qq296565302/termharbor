@@ -1911,42 +1911,133 @@ a:focus-visible,
   white-space: nowrap;
 }
 
-/* 路径条：贴边浅底，像地址栏而不是第二个按钮组 */
-.files-crumbs {
+/* ---- 地址栏：照资源管理器的样子 ----
+   一条独立的横条：左边三颗导航键，中间一个带边框的路径框（面包屑/手输两态），
+   右边刷新与回家。不再用"贴边浅底"那套 —— 那样看着像第二个按钮组，
+   而且和列表头连在一起，分不清哪行是地址。 */
+.files-addr {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 1px;
-  min-height: 30px;
-  padding: 4px 10px;
+  gap: 6px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-subtle);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
+  background: var(--bg-panel);
 }
 
-.files-crumbs__item {
+.files-addr__nav {
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* 路径框：静止时是一圈细边，输入时换成主色 + 轻微外发光（和 .input 一致） */
+.files-addr__box {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-panel);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.files-addr__box:hover {
+  border-color: var(--text-faint);
+}
+
+.files-addr__box.is-editing,
+.files-addr__box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.files-crumbs {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  /* 深层路径横向滚动，但不要那条丑滚动条（对齐资源管理器的做法） */
+  scrollbar-width: none;
+}
+
+.files-crumbs::-webkit-scrollbar {
+  display: none;
+}
+
+.files-crumb {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
+  flex: none;
 }
 
-.files-crumbs__sep {
+.files-crumb__sep {
+  padding: 0 1px;
   color: var(--text-faint);
+  font-size: var(--fs-xs);
+  line-height: 1;
 }
 
-.files-crumbs__link {
-  padding: 2px 5px;
+.files-crumb__link {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 1px 5px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: 3px;
   background: transparent;
   color: var(--text-muted);
-  font: inherit;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.files-crumbs__link:hover {
+.files-crumb__link:hover {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* 当前目录：颜色更实、稍重 —— 一眼能看出"我在哪" */
+.files-crumb__link.is-current {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.files-addr__edit {
+  flex: none;
+  margin-left: auto;
+  padding: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.files-addr__box:hover .files-addr__edit,
+.files-addr__edit:focus-visible {
+  opacity: 1;
+}
+
+.files-addr__edit:hover {
+  color: var(--accent);
+}
+
+.files-addr__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  outline: none;
 }
 
 .files-inline {
