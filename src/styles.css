@@ -3994,292 +3994,507 @@ a:focus-visible,
   font-variant-numeric: tabular-nums;
 }
 
-.load-card {
+/* ------------------------------------------------------------ 看板可视化
+   语气：细线 + 等宽数字 + 低饱和底色；颜色只表达两件事 ——
+   「这是哪个量」和「有多危险」。所有图都是手写 SVG（`lib/chart` 算 path）。 */
+
+.viz-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* 迷你趋势图用 currentColor，所以整格的色调靠这里切：安全=主色、告警=橙、危险=红 */
+.viz-kpi__cell {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 11px 13px 12px;
+  gap: 1px;
+  overflow: hidden;
+  padding: 8px 9px 4px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--bg-panel);
-  box-shadow: var(--shadow-xs);
+  color: var(--accent);
 }
 
-.load-card--meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px 14px;
+.viz-kpi__cell.is-warn {
+  color: var(--warn);
 }
 
-.load-card__head {
+.viz-kpi__cell.is-danger {
+  color: var(--danger);
+}
+
+.viz-kpi__label {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz-kpi__value {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.viz-kpi__value em {
+  margin-left: 1px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.viz-kpi__spark {
+  display: block;
+  width: 100%;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.viz-kpi__area {
+  fill: currentColor;
+  opacity: 0.1;
+}
+
+.viz-kpi__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+/* ---- 卡片 ---- */
+.viz-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+}
+
+.viz-card__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  color: var(--text-muted);
+}
+
+.viz-card__name {
+  color: var(--text);
   font-size: var(--fs-sm);
+  font-weight: 500;
 }
 
-.load-card__name {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.load-card__head--sub {
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.load-card__value {
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-
-.load-card__hint {
-  margin: 0;
+.viz-card__meta {
   color: var(--text-faint);
   font-size: var(--fs-xs);
-  line-height: 1.6;
-}
-
-.load-card__line {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
-/* CPU 历史折线：SVG 拉满宽度，1px 线 */
-.load-spark {
+/* ---- 面积图 ---- */
+.viz-chart {
+  position: relative;
+  color: var(--accent);
+}
+
+.viz-chart svg {
+  display: block;
   width: 100%;
-  height: 30px;
-  border-radius: var(--r-sm);
-  background: var(--bg-sunken);
-  overflow: visible;
+  height: 100%;
 }
 
-.load-spark--empty {
-  color: var(--text-faint);
-  font-size: var(--fs-xs);
-  line-height: 30px;
-  text-align: center;
+.viz-chart__grid {
+  stroke: var(--border);
+  stroke-width: 1;
 }
 
-.load-spark__line {
+/* 阈值线用橙色虚线：不抢主线，但一眼能看出"过线了" */
+.viz-chart__threshold {
+  stroke: var(--warn);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.viz-chart__line {
   fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.4;
+  stroke: currentColor;
+  stroke-linecap: round;
   stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
+  stroke-width: 1.5;
 }
 
-/* 每核占用：窄条 + 编号，核心多时自动换行 */
-.load-cores {
+/* 上行（tx）用橙色，和下行区分；两条线都不填满，避免互相盖住 */
+.viz-chart__series--secondary {
+  color: var(--warn);
+}
+
+.viz-chart__empty {
+  fill: var(--text-faint);
+  font-size: 11px;
+}
+
+/* ---- CPU 统计与分核热力 ---- */
+.viz-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px 8px;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
-.load-core {
+.viz-stats b {
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.viz-stats__dim {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+/* 分核热力条：固定窄条，别用 1fr 拉满 —— 4 核时会被拉成 4 根粗柱子，
+   64 核时又挤成一堆。列宽卡在 18–26px，两边都好看。 */
+.viz-cores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18px, 26px));
+  gap: 3px;
+  align-items: end;
+  justify-content: start;
+}
+
+.viz-core {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
   align-items: center;
-  gap: 5px;
-  width: 70px;
 }
 
-.load-core__label {
-  flex: 0 0 auto;
-}
-
-.load-core__bar {
-  flex: 1;
-  height: 4px;
+/* 热力条：竖着长，高度就是使用率；颜色按 70 / 90 两档 */
+.viz-core__track {
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  height: 30px;
+  overflow: hidden;
   border-radius: 2px;
   background: var(--bg-sunken);
-  overflow: hidden;
 }
 
-.load-core__fill {
+.viz-core__fill {
   display: block;
-  height: 100%;
+  width: 100%;
+  /* 最低留 2px：核几乎空闲时也要看得见这一格存在，否则像缺了一行 */
+  min-height: 2px;
   border-radius: 2px;
+  transition: height 200ms ease;
 }
 
-.load-core__label {
+.viz-core__label {
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 9px;
+  line-height: 1;
 }
 
-/* 内存/Swap 的横向进度条 */
-.load-bar {
-  display: block;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--bg-sunken);
-  overflow: hidden;
+.viz-core__fill.is-ok {
+  background: var(--accent);
 }
 
-.load-bar__fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  transition: width 200ms ease;
-}
-
-/* 阈值配色：与诊断面板口径一致（70 / 90） */
-.load-bar__fill.is-ok,
-.load-core__fill.is-ok,
-.load-row__fill.is-ok {
-  background: var(--ok);
-}
-
-.load-bar__fill.is-warn,
-.load-core__fill.is-warn,
-.load-row__fill.is-warn {
+.viz-core__fill.is-warn {
   background: var(--warn);
 }
 
-.load-bar__fill.is-danger,
-.load-core__fill.is-danger,
-.load-row__fill.is-danger {
+.viz-core__fill.is-danger {
   background: var(--danger);
 }
 
-/* 负载三元组：三个数字是看板上第二重要的信息，给它独立底色和更大的字 */
-.load-triple {
+/* ---- 分段条（内存 / 磁盘 / swap） ---- */
+.viz-stack {
+  display: flex;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+}
+
+.viz-stack__fill {
+  display: block;
+  height: 100%;
+  transition: width 200ms ease;
+}
+
+.viz-stack__fill.is-used {
+  background: var(--accent);
+}
+
+.viz-stack__fill.is-cache {
+  background: color-mix(in srgb, var(--accent) 38%, var(--bg-sunken));
+}
+
+.viz-stack__fill.is-swap {
+  background: var(--warn);
+}
+
+.viz-stack__fill.is-disk.is-ok {
+  background: var(--accent);
+}
+
+.viz-stack__fill.is-disk.is-warn {
+  background: var(--warn);
+}
+
+.viz-stack__fill.is-disk.is-danger {
+  background: var(--danger);
+}
+
+/* ---- 图例 ---- */
+.viz-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.viz-legend__item--dim {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+.viz-legend__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--text-faint);
+}
+
+.viz-legend__dot.is-used,
+.viz-legend__dot.is-rx {
+  background: var(--accent);
+}
+
+.viz-legend__dot.is-cache {
+  background: color-mix(in srgb, var(--accent) 38%, var(--bg-sunken));
+}
+
+.viz-legend__dot.is-free {
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.viz-legend__dot.is-tx {
+  background: var(--warn);
+}
+
+.viz-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.viz-sub__head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 明细行：磁盘 / 网络 / 进程共用一套网格 ---- */
+.viz-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.viz-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.viz-row__name {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viz-row__rate,
+.viz-row__num {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.viz-row__num {
+  text-align: right;
+}
+
+.viz-row__num--dim {
+  color: var(--text-faint);
+}
+
+.viz-row__pid {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.viz-disk {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.viz-disk__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 44px;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.viz-disk__meta {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.viz-disk__pct {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.viz-disk__pct.is-warn {
+  color: var(--warn);
+}
+
+.viz-disk__pct.is-danger {
+  color: var(--danger);
+}
+
+/* ---- 进程：名字 + 一条 mini 条 + 两个百分比 ---- */
+.viz-proc {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 54px 42px 38px;
+  gap: 8px;
+  align-items: center;
+}
+
+.viz-proc__bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-sunken);
+}
+
+.viz-proc__fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+}
+
+.viz-proc__fill.is-ok {
+  background: var(--accent);
+}
+
+.viz-proc__fill.is-warn {
+  background: var(--warn);
+}
+
+.viz-proc__fill.is-danger {
+  background: var(--danger);
+}
+
+/* ---- 负载三元组 ---- */
+.viz-triple {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
-.load-triple__item {
+.viz-triple__item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1px;
-  padding: 8px 0 7px;
+  padding: 7px 0 6px;
   border-radius: var(--r-sm);
   background: var(--bg-subtle);
 }
 
-.load-triple__num {
+.viz-triple__num {
   color: var(--text);
   font-family: var(--mono);
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   line-height: 1.2;
 }
 
-.load-triple__label {
+.viz-triple__label {
   color: var(--text-faint);
   font-size: 10.5px;
 }
 
-/* 列表行：磁盘 / 网络 / 进程共用 */
-.load-list {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.load-row {
+/* ---- 底部四格 ---- */
+.viz-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px auto 38px;
-  gap: 8px;
-  align-items: center;
-  font-size: var(--fs-sm);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
 }
 
-.load-row--net {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-.load-row--proc {
-  grid-template-columns: 48px minmax(0, 1fr) 46px 46px;
-}
-
-.load-row__name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.load-row__bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg-sunken);
-  overflow: hidden;
-}
-
-.load-row__fill {
+.viz-meta__label {
   display: block;
-  height: 100%;
-  border-radius: 2px;
-}
-
-.load-row__meta {
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.load-row__num {
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.load-row__num--dim {
-  color: var(--text-faint);
-}
-
-.load-row__pid {
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-}
-
-.load-row__rate {
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 底部四格：标签在上、值在下，值用等宽字体对齐 */
-.load-meta__label {
-  display: block;
+  margin-bottom: 1px;
   color: var(--text-faint);
   font-size: 10.5px;
-  margin-bottom: 1px;
 }
 
-.load-meta__value {
+.viz-meta__value {
   display: block;
   overflow: hidden;
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -134,7 +134,7 @@ const responses: Record<string, unknown> = {
   snippet_list: snippets,
   snippet_classify: "readonly",
   env_probe: env,
-  load_snapshot: load,
+  load_snapshot: () => nextLoad(),
 };
 
 /* ---------------------------------------------------------------- 连接页（跳板取证） */
@@ -430,7 +430,11 @@ let seq = 0;
   invoke: async (cmd) => {
     // 事件通道只要求返回一个 id；其余按命令名查表
     if (cmd.startsWith("plugin:event|")) return 1;
-    if (cmd in responses) return responses[cmd];
+    if (cmd in responses) {
+      const value = responses[cmd];
+      // 函数就每次重算：看板要靠多次采样才有曲线，固定值只能得到一条直线
+      return typeof value === "function" ? value() : value;
+    }
     return null;
   },
   transformCallback: () => {
@@ -456,6 +460,14 @@ function Preview() {
         onRefresh={() => undefined}
         onClose={() => undefined}
       />
+    );
+  }
+
+  if (panel === "load") {
+    return (
+      <div style={{ width: "100%", height: "100vh", display: "flex", justifyContent: "flex-end" }}>
+        <LoadPanel sessionId="s1" active onClose={() => undefined} />
+      </div>
     );
   }
 
@@ -491,6 +503,47 @@ function Preview() {
       <LoadPanel sessionId="s1" active onClose={() => undefined} />
     </div>
   );
+}
+
+/**
+ * 采样夹具：每次调用往前走一格，按正弦 + 抖动造出"像真的"负载曲线。
+ *
+ * 固定值在预览里只能画出一条直线 —— 而这块面板这次改的就是"看不出波动"，
+ * 用直线截图等于什么都没验证。
+ */
+let loadTick = 0;
+function nextLoad(): LoadSnapshot {
+  loadTick += 1;
+  const wave = Math.sin(loadTick / 2.2);
+  const jitter = () => (Math.random() - 0.5) * 6;
+
+  const cpu = Math.max(3, Math.min(96, 42 + wave * 26 + jitter()));
+  const coreCount = load.cpu.cores.length;
+  const cores = load.cpu.cores.map((_, index) =>
+    Math.max(1, Math.min(100, cpu + Math.sin(loadTick / 1.6 + index) * 14 + (Math.random() - 0.5) * 8)),
+  );
+  const memPercent = Math.min(94, 46 + loadTick * 0.6);
+  const rx = 900_000 + wave * 520_000 + Math.random() * 160_000;
+  const tx = 240_000 + Math.cos(loadTick / 3) * 120_000 + Math.random() * 50_000;
+
+  return {
+    ...load,
+    load1: Math.max(0.05, 0.6 + wave * 0.5),
+    load5: 0.5 + wave * 0.3,
+    load15: 0.42 + wave * 0.15,
+    cpu: { percent: cpu, coresCount: coreCount, cores },
+    memory: {
+      ...load.memory,
+      percent: memPercent,
+      usedKb: Math.round(load.memory.totalKb * (memPercent / 100)),
+      availableKb: Math.round(load.memory.totalKb * (1 - memPercent / 100)),
+    },
+    nets: [
+      { ...load.nets[0], rxBps: rx, txBps: tx },
+      load.nets[1],
+    ],
+    tcpEstablished: 18 + Math.round(Math.abs(wave) * 12),
+  };
 }
 
 createRoot(document.getElementById("root")!).render(<Preview />);
