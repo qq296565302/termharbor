@@ -27,6 +27,7 @@ import type {
   McpConfigView,
   RemoteEntry,
   SnippetDto,
+  TunnelDto,
 } from "../lib/types";
 
 const now = Date.now();
@@ -224,7 +225,47 @@ const importPreview = {
   })),
 };
 
+/** 转发规则夹具：一条运行中、一条未启动、一条失败（错误文案要能显示出来） */
+const tunnelFixtures: TunnelDto[] = [
+  {
+    id: "t1",
+    connectionId: "c2",
+    localPort: 13306,
+    targetHost: "10.0.3.21",
+    targetPort: 3306,
+    state: "listening",
+    message: null,
+    createdAt: now - 3 * 60 * MIN,
+  },
+  {
+    id: "t2",
+    connectionId: "c2",
+    localPort: 16379,
+    targetHost: "10.0.3.21",
+    targetPort: 6379,
+    state: "stopped",
+    message: null,
+    createdAt: now - 2 * 60 * MIN,
+  },
+  {
+    id: "t3",
+    connectionId: "c2",
+    localPort: 15432,
+    targetHost: "10.0.3.99",
+    targetPort: 5432,
+    state: "failed",
+    message:
+      "远端连不上 10.0.3.99:5432（open failed）。地址/端口写错，或那台机器的防火墙没放行",
+    createdAt: now - 60 * MIN,
+  },
+];
+
 Object.assign(responses, {
+  tunnel_list: tunnelFixtures,
+  tunnel_create: tunnelFixtures[1],
+  tunnel_start: tunnelFixtures[0],
+  tunnel_stop: tunnelFixtures[1],
+  tunnel_delete: null,
   "plugin:dialog|open": "C:/Users/me/Desktop/termharbor-connections.json",
   config_import_preview: importPreview,
   config_import: { imported: 2, skipped: 0 },

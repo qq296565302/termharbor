@@ -13,5 +13,6 @@ pub mod known_hosts;
 pub mod migrations;
 pub mod settings;
 pub mod snippets;
+pub mod tunnels;
 
 pub use db::Db;

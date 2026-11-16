@@ -10,6 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::logging::LoggingGuard;
 use crate::sftp::{SftpManager, Transfers};
 use crate::ssh::session::SessionManager;
+use crate::ssh::tunnel::TunnelManager;
 use crate::storage::Db;
 
 /// 产品文件夹名。快照、MCP 配置、审计日志都放 `%APPDATA%\TermHarbor\`，
@@ -148,6 +149,8 @@ pub struct AppState {
     pub sftp: Arc<SftpManager>,
     /// 在途传输的取消令牌。
     pub transfers: Arc<Transfers>,
+    /// 本地端口转发（`-L`）的运行时。不依附终端标签，自己建专用连接。
+    pub tunnels: Arc<TunnelManager>,
     /// 本进程启动时刻（毫秒）。
     ///
     /// 设置页核对「这条记录的租约是不是本进程写的」要用它：早于这个时刻的记录

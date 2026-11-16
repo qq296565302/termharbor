@@ -11,6 +11,7 @@ import type {
   ImportCandidate,
   ImportPreview,
   TestOutcome,
+  TunnelDto,
 } from "../lib/types";
 import { useUiStore } from "../stores/uiStore";
 
@@ -117,6 +118,14 @@ export default function ConnectionsPage() {
    * 导出文件里只有跳板的**名字**（id 跨机器没意义），所以导入时不能自动还原：
    * 同名不代表同一台机器，猜错会静默连到别处。这里把线索摆出来让用户点一下。
    */
+  /** 当前连接的本地转发规则（带运行状态） */
+  const [tunnels, setTunnels] = useState<TunnelDto[]>([]);
+  const [tunnelDraft, setTunnelDraft] = useState({
+    localPort: "",
+    targetHost: "",
+    targetPort: "",
+  });
+  const [tunnelBusy, setTunnelBusy] = useState(false);
   const [pendingImport, setPendingImport] = useState<{
     path: string;
     candidates: ImportCandidate[];
@@ -268,6 +277,80 @@ export default function ConnectionsPage() {
           }
         : current,
     );
+  };
+
+  const reloadTunnels = useCallback(async (connectionId: string | null) => {
+    if (!connectionId) {
+      setTunnels([]);
+      return;
+    }
+    try {
+      setTunnels(await call<TunnelDto[]>("tunnel_list", { connectionId }));
+    } catch {
+      // 列表拉不到不该打断编辑，静默留空即可
+      setTunnels([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadTunnels(editingId);
+  }, [editingId, reloadTunnels]);
+
+  const addTunnel = async () => {
+    if (!editingId) return;
+    const localPort = Number.parseInt(tunnelDraft.localPort, 10);
+    const targetPort = Number.parseInt(tunnelDraft.targetPort, 10);
+    if (!localPort || !targetPort || !tunnelDraft.targetHost.trim()) {
+      setNotice({ tone: "warn", title: "本机端口、目标地址、目标端口都要填" });
+      return;
+    }
+
+    setTunnelBusy(true);
+    try {
+      await call<TunnelDto>("tunnel_create", {
+        connectionId: editingId,
+        localPort,
+        targetHost: tunnelDraft.targetHost.trim(),
+        targetPort,
+      });
+      setTunnelDraft({ localPort: "", targetHost: "", targetPort: "" });
+      await reloadTunnels(editingId);
+      setNotice(null);
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+    } finally {
+      setTunnelBusy(false);
+    }
+  };
+
+  const toggleTunnel = async (tunnel: TunnelDto) => {
+    setTunnelBusy(true);
+    try {
+      await call<TunnelDto>(
+        tunnel.state === "listening" ? "tunnel_stop" : "tunnel_start",
+        { id: tunnel.id },
+      );
+      await reloadTunnels(editingId);
+      setNotice(null);
+    } catch (err) {
+      // 失败原因（端口被占、远端连不上）比"失败"两个字有用得多
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+      await reloadTunnels(editingId);
+    } finally {
+      setTunnelBusy(false);
+    }
+  };
+
+  const removeTunnel = async (id: string) => {
+    setTunnelBusy(true);
+    try {
+      await call("tunnel_delete", { id });
+      await reloadTunnels(editingId);
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+    } finally {
+      setTunnelBusy(false);
+    }
   };
 
   const openNew = () => {
@@ -707,6 +790,110 @@ export default function ConnectionsPage() {
                 <em>只有在服务器版本很老、提示算法协商失败时才需要打开</em>
               </span>
             </label>
+
+            {/* 本地转发：规则挂在连接上，跟这台机器走 */}
+            {editing ? (
+              <section className="tunnel">
+                <div className="tunnel__head">
+                  <span className="tunnel__title">本地转发</span>
+                  <span className="field__hint">
+                    把这台机器能访问的服务搬到本机。只监听 127.0.0.1，同网段的其他人连不到；
+                    隧道自己建一条连接，关掉终端标签不受影响。
+                  </span>
+                </div>
+
+                {tunnels.length > 0 ? (
+                  <ul className="tunnel__list">
+                    {tunnels.map((tunnel) => (
+                      <li key={tunnel.id} className="tunnel__row">
+                        <span className="tunnel__map">
+                          <code>
+                            127.0.0.1:{tunnel.localPort}
+                          </code>
+                          <span className="tunnel__arrow">→</span>
+                          <code>
+                            {tunnel.targetHost}:{tunnel.targetPort}
+                          </code>
+                        </span>
+                        <span
+                          className={`pill ${
+                            tunnel.state === "listening"
+                              ? "pill--ok"
+                              : tunnel.state === "failed"
+                                ? "pill--warn"
+                                : ""
+                          }`}
+                        >
+                          {tunnel.state === "listening"
+                            ? "运行中"
+                            : tunnel.state === "failed"
+                              ? "失败"
+                              : "未启动"}
+                        </span>
+                        <span className="tunnel__actions">
+                          <button
+                            type="button"
+                            className="btn btn--small"
+                            disabled={tunnelBusy}
+                            onClick={() => void toggleTunnel(tunnel)}
+                          >
+                            {tunnel.state === "listening" ? "停止" : "启动"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--ghost btn--small"
+                            disabled={tunnelBusy}
+                            onClick={() => void removeTunnel(tunnel.id)}
+                          >
+                            删除
+                          </button>
+                        </span>
+                        {tunnel.state === "failed" && tunnel.message ? (
+                          <p className="tunnel__error">{tunnel.message}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="field__hint">还没有规则。填好下面三格，点「添加」。</p>
+                )}
+
+                <div className="tunnel__add">
+                  <input
+                    className="input input--port"
+                    placeholder="本机端口"
+                    value={tunnelDraft.localPort}
+                    inputMode="numeric"
+                    onChange={(e) =>
+                      setTunnelDraft({ ...tunnelDraft, localPort: e.target.value.replace(/\D/g, "") })
+                    }
+                  />
+                  <input
+                    className="input"
+                    placeholder="目标地址，如 10.0.3.21"
+                    value={tunnelDraft.targetHost}
+                    onChange={(e) => setTunnelDraft({ ...tunnelDraft, targetHost: e.target.value })}
+                  />
+                  <input
+                    className="input input--port"
+                    placeholder="目标端口"
+                    value={tunnelDraft.targetPort}
+                    inputMode="numeric"
+                    onChange={(e) =>
+                      setTunnelDraft({ ...tunnelDraft, targetPort: e.target.value.replace(/\D/g, "") })
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    disabled={tunnelBusy}
+                    onClick={() => void addTunnel()}
+                  >
+                    添加
+                  </button>
+                </div>
+              </section>
+            ) : null}
 
             <footer className="conn-editor__foot">
               <button

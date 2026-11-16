@@ -9,6 +9,8 @@ use serde::Serialize;
 pub const EVT_SSH_STATE: &str = "ssh:state";
 /// 传输进度，Rust 侧 150ms 节流
 pub const EVT_SFTP_PROGRESS: &str = "sftp:progress";
+/// 本地转发状态变化（起了/停了/失败了）
+pub const EVT_TUNNEL_STATE: &str = "tunnel:state";
 
 /// 终端输出批次。
 ///

@@ -1109,6 +1109,95 @@ a:focus-visible,
   color: var(--warn);
 }
 
+.pill--ok {
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
+  color: var(--ok);
+}
+
+/* ---- 本地转发（-L）：规则挂在连接上，跟这台机器走 ---- */
+.tunnel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.tunnel__head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tunnel__title {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.tunnel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tunnel__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-subtle);
+}
+
+.tunnel__map {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.tunnel__map code {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tunnel__arrow {
+  color: var(--text-faint);
+}
+
+.tunnel__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tunnel__error {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  color: var(--danger);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.tunnel__add {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 92px auto;
+  gap: 6px;
+  align-items: center;
+}
+
 .conn-editor {
   display: flex;
   flex-direction: column;

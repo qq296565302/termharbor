@@ -29,6 +29,7 @@ use tauri::Manager;
 use crate::crypto::{default_provider, FieldCipher};
 use crate::sftp::{SftpManager, Transfers};
 use crate::ssh::session::SessionManager;
+use crate::ssh::TunnelManager;
 use crate::state::{AppPaths, AppState};
 use crate::storage::Db;
 
@@ -149,6 +150,7 @@ pub fn run() {
                 sessions: Arc::new(SessionManager::new()),
                 sftp: Arc::new(SftpManager::new()),
                 transfers: Arc::new(Transfers::new()),
+                tunnels: Arc::new(TunnelManager::new()),
                 started_at_ms: crate::state::now_millis(),
                 _logging: logging,
             });
@@ -227,6 +229,11 @@ pub fn run() {
             commands::config_io::config_export,
             commands::config_io::config_import,
             commands::config_io::config_import_preview,
+            commands::tunnel::tunnel_list,
+            commands::tunnel::tunnel_create,
+            commands::tunnel::tunnel_delete,
+            commands::tunnel::tunnel_start,
+            commands::tunnel::tunnel_stop,
             commands::update::update_check,
             commands::update::update_open_page,
             commands::settings::settings_get,
@@ -249,6 +256,8 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = handle.try_state::<AppState>() {
                     crate::lease::clear(&state.paths.product_dir);
+                    // 转发是先收摊再走：否则端口会挂到进程真正退出为止
+                    state.tunnels.stop_all();
                     // 「本次客户端会话」的放行到此为止。固定时长的放行保留到自然过期；
                     // 强杀来不及走这里，还有配置里的 8 小时兜底。
                     let store = crate::mcp::config::ConfigStore::new(&crate::mcp::data_dir(

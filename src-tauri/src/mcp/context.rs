@@ -197,6 +197,7 @@ impl Context {
             sessions: Arc::new(SessionManager::new()),
             sftp: Arc::new(SftpManager::new()),
             transfers: Arc::new(Transfers::new()),
+            tunnels: Arc::new(crate::ssh::tunnel::TunnelManager::new()),
             started_at_ms: crate::state::now_millis(),
             // MCP 不落盘日志（真日志要和 GUI 分开规划），但 stdout 更不能碰
             _logging: LoggingGuard::disabled(),

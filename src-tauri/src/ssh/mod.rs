@@ -9,9 +9,11 @@ pub mod exec;
 pub mod hostkey;
 pub mod profile;
 pub mod session;
+pub mod tunnel;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use client::{probe, ProbeAuth, ProbeRequest, ProbeResult, ProbeSuccess};
 pub use hostkey::{HostKeyDecision, HostKeyInfo};
+pub use tunnel::{TunnelManager, TunnelState};

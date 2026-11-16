@@ -15,6 +15,7 @@ export const ERR_CODES = [
   "SSH_DISCONNECTED",
   "SSH_SESSION_NOT_FOUND",
   "SSH_JUMP_FAILED",
+  "TUNNEL_FAILED",
   // SFTP
   "SFTP_PERMISSION_DENIED",
   "SFTP_NOT_FOUND",
@@ -43,6 +44,7 @@ export const ERROR_MESSAGES: Record<ErrCode, string> = {
   SSH_DISCONNECTED: "连接已断开",
   SSH_SESSION_NOT_FOUND: "会话不存在或已关闭",
   SSH_JUMP_FAILED: "跳板机无法把连接转发到目标服务器",
+  TUNNEL_FAILED: "本地转发未能建立",
   SFTP_PERMISSION_DENIED: "权限不足，无法执行该操作",
   SFTP_NOT_FOUND: "文件或目录不存在",
   SFTP_IO_ERROR: "文件传输失败",

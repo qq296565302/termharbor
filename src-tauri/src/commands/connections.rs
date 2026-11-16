@@ -257,6 +257,18 @@ pub async fn connection_update(
 
 #[tauri::command]
 pub async fn connection_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    // 先停掉这台机器的转发：规则跟着连接一起删，但端口得先还回去
+    let removed_tunnels = state
+        .db
+        .call({
+            let id = id.clone();
+            move |conn| crate::storage::tunnels::delete_for_connection(conn, &id)
+        })
+        .await?;
+    state
+        .tunnels
+        .stop_for_connection(std::slice::from_ref(&id), &removed_tunnels);
+
     state
         .db
         .call({
@@ -264,7 +276,7 @@ pub async fn connection_delete(state: State<'_, AppState>, id: String) -> AppRes
             move |conn| connections::delete(conn, &id)
         })
         .await?;
-    tracing::info!(id = %id, "已删除连接配置");
+    tracing::info!(id = %id, tunnels = removed_tunnels.len(), "已删除连接配置");
     Ok(())
 }
 

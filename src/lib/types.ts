@@ -71,6 +71,20 @@ export interface ConnectionInput {
   jumpConnectionId?: string | null;
 }
 
+/** 本地端口转发（`-L`）。对应 `commands/tunnel.rs::TunnelDto` */
+export interface TunnelDto {
+  id: string;
+  connectionId: string;
+  /** 本机监听端口（地址固定 127.0.0.1） */
+  localPort: number;
+  targetHost: string;
+  targetPort: number;
+  /** `stopped` | `listening` | `failed` */
+  state: "stopped" | "listening" | "failed";
+  message: string | null;
+  createdAt: number;
+}
+
 /** 对应 `commands/config_io.rs::ImportPreview`：导入前给用户确认跳板配对 */
 export interface ImportPreviewEntry {
   /** 与判重同一套口径的稳定 key，导入时按它回传配对结果 */
