@@ -179,11 +179,16 @@ pub async fn tunnel_start(
             ))
         }
         Err(err) => {
-            // 失败也要留下痕迹：前端刷新列表时要能看到"为什么没起来"
-            state.tunnels.note_failure(&rec.id, err.to_string());
+            // 失败也要留下痕迹：前端刷新列表时要能看到"为什么没起来"。
+            // 只存人话 —— 行内那行字给用户看，`[TUNNEL_FAILED]` 这种前缀是给日志的。
+            let note = err
+                .detail
+                .clone()
+                .unwrap_or_else(|| err.message.to_string());
+            state.tunnels.note_failure(&rec.id, note.clone());
             let _ = app.emit(
                 crate::events::EVT_TUNNEL_STATE,
-                serde_json::json!({ "tunnelId": rec.id, "state": "failed", "message": err.to_string() }),
+                serde_json::json!({ "tunnelId": rec.id, "state": "failed", "message": note }),
             );
             Err(err)
         }

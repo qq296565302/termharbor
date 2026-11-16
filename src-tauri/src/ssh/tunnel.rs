@@ -274,11 +274,39 @@ async fn probe_target(handle: &client::Handle<ProbeHandler>, req: &StartRequest)
             AppError::with_detail(
                 ErrCode::TunnelFailed,
                 format!(
-                    "远端连不上 {}:{}（{err}）。地址/端口写错，或那台机器的防火墙没放行",
-                    req.target_host, req.target_port
+                    "远端连不上 {}:{}（{err}）。{}",
+                    req.target_host,
+                    req.target_port,
+                    target_hint(&req.target_host, &req.probe.host)
                 ),
             )
         })
+}
+
+/// 目标连不上时给一句"下一步该改什么"。
+///
+/// 最常见的一次踩坑：目标填成这台服务器**自己的公网 IP**。云主机的公网地址是
+/// NAT 映射，机器自己往回连多半不通（hairpin 不支持），看起来就像"内网不通"。
+fn target_hint(target: &str, own_host: &str) -> &'static str {
+    if looks_like_own_address(target, own_host) {
+        "目标填的是这台服务器自己的公网 IP —— 云主机通常连不回自己的公网地址，换成 127.0.0.1 或内网 IP"
+    } else {
+        "地址/端口写错，或那台机器的防火墙没放行"
+    }
+}
+
+/// 目标是不是"这台机器自己的地址"（回环地址不算：那是本机服务，完全正常）。
+fn looks_like_own_address(target: &str, own_host: &str) -> bool {
+    let target = target.trim();
+    let own = own_host.trim();
+    if target.is_empty() || own.is_empty() {
+        return false;
+    }
+    let is_loopback = matches!(
+        target.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    );
+    !is_loopback && target.eq_ignore_ascii_case(own)
 }
 
 fn bind_error(port: u16, err: &std::io::Error) -> AppError {
@@ -341,6 +369,22 @@ mod tests {
             trust_fingerprint: None,
             jump: None,
         }
+    }
+
+    /// 目标填成服务器自己的公网 IP 时，文案要直接点出来（用户真踩过）。
+    #[test]
+    fn own_public_ip_is_called_out() {
+        assert!(looks_like_own_address("47.94.196.217", "47.94.196.217"));
+        assert!(looks_like_own_address(" Example.COM ", "example.com"));
+        assert!(
+            !looks_like_own_address("127.0.0.1", "47.94.196.217"),
+            "回环是正常写法"
+        );
+        assert!(!looks_like_own_address("10.0.3.21", "47.94.196.217"));
+        assert!(!looks_like_own_address("", "47.94.196.217"));
+
+        assert!(target_hint("47.94.196.217", "47.94.196.217").contains("自己的公网 IP"));
+        assert!(target_hint("10.0.3.21", "47.94.196.217").contains("防火墙"));
     }
 
     /// 端口被占用时报的必须是"本机端口被占用"，而不是含糊的"建连失败"。

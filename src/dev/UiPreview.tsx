@@ -250,12 +250,12 @@ const tunnelFixtures: TunnelDto[] = [
   {
     id: "t3",
     connectionId: "c2",
-    localPort: 15432,
-    targetHost: "10.0.3.99",
-    targetPort: 5432,
+    localPort: 13306,
+    targetHost: "47.94.196.217",
+    targetPort: 13306,
     state: "failed",
     message:
-      "远端连不上 10.0.3.99:5432（open failed）。地址/端口写错，或那台机器的防火墙没放行",
+      "远端连不上 47.94.196.217:13306（Failed to open channel (ConnectFailed)）。目标填的是这台服务器自己的公网 IP —— 云主机通常连不回自己的公网地址，换成 127.0.0.1 或内网 IP",
     createdAt: now - 60 * MIN,
   },
 ];

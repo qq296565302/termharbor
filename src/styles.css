@@ -1120,8 +1120,10 @@ a:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 14px;
-  padding-top: 12px;
+  /* 上面那条分割线要和「兼容老服务器算法」的说明文字拉开距离：
+     线上面靠 margin-top，线下面靠 padding-top，两边都得留，只加一边会显得偏 */
+  margin: 16px 0 14px;
+  padding-top: 14px;
   border-top: 1px solid var(--border);
 }
 
