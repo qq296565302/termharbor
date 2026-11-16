@@ -14,6 +14,7 @@ export const ERR_CODES = [
   "SSH_ALGO_NEGOTIATION",
   "SSH_DISCONNECTED",
   "SSH_SESSION_NOT_FOUND",
+  "SSH_JUMP_FAILED",
   // SFTP
   "SFTP_PERMISSION_DENIED",
   "SFTP_NOT_FOUND",
@@ -41,6 +42,7 @@ export const ERROR_MESSAGES: Record<ErrCode, string> = {
   SSH_ALGO_NEGOTIATION: "与服务器的加密算法协商失败",
   SSH_DISCONNECTED: "连接已断开",
   SSH_SESSION_NOT_FOUND: "会话不存在或已关闭",
+  SSH_JUMP_FAILED: "跳板机无法把连接转发到目标服务器",
   SFTP_PERMISSION_DENIED: "权限不足，无法执行该操作",
   SFTP_NOT_FOUND: "文件或目录不存在",
   SFTP_IO_ERROR: "文件传输失败",

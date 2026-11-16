@@ -10,6 +10,7 @@
  */
 import { createRoot } from "react-dom/client";
 
+import ConnectionsPage from "../pages/ConnectionsPage";
 import DiagPanel from "../pages/DiagPanel";
 import FilePanel from "../pages/FilePanel";
 import LoadPanel from "../pages/LoadPanel";
@@ -17,6 +18,7 @@ import McpSettings from "../pages/McpSettings";
 import SnippetPanel from "../pages/SnippetPanel";
 import "../styles.css";
 import type {
+  ConnectionDto,
   DiagResult,
   EnvStatus,
   LoadSnapshot,
@@ -133,6 +135,67 @@ const responses: Record<string, unknown> = {
   env_probe: env,
   load_snapshot: load,
 };
+
+/* ---------------------------------------------------------------- 连接页（跳板取证） */
+
+const connections: ConnectionDto[] = [
+  {
+    id: "c1",
+    name: "堡垒机",
+    host: "10.0.0.9",
+    port: 2222,
+    username: "jump",
+    authType: "password",
+    hasPassword: true,
+    keyPath: null,
+    hasKeyPassphrase: false,
+    legacyAlgorithms: false,
+    jumpConnectionId: null,
+    lastUsedAt: now - 40 * MIN,
+    createdAt: now - 90 * 24 * 60 * MIN,
+    updatedAt: now - 90 * 24 * 60 * MIN,
+  },
+  {
+    id: "c2",
+    name: "内网 MySQL",
+    host: "10.0.3.21",
+    port: 22,
+    username: "ops",
+    authType: "key",
+    hasPassword: false,
+    keyPath: "C:/Users/me/.ssh/id_ed25519",
+    hasKeyPassphrase: true,
+    legacyAlgorithms: false,
+    jumpConnectionId: "c1",
+    lastUsedAt: now - 2 * MIN,
+    createdAt: now - 30 * 24 * 60 * MIN,
+    updatedAt: now - 6 * 24 * 60 * MIN,
+  },
+  {
+    id: "c3",
+    name: "老 CentOS 6",
+    host: "10.0.0.31",
+    port: 22,
+    username: "root",
+    authType: "password",
+    hasPassword: true,
+    keyPath: null,
+    hasKeyPassphrase: false,
+    legacyAlgorithms: true,
+    jumpConnectionId: null,
+    lastUsedAt: null,
+    createdAt: now - 3 * 24 * 60 * MIN,
+    updatedAt: now - 3 * 24 * 60 * MIN,
+  },
+];
+
+Object.assign(responses, {
+  connection_list: connections,
+  connection_get: connections[1],
+  connection_create: connections[1],
+  connection_update: connections[1],
+  connection_delete: null,
+});
 
 /* ---------------------------------------------------------------- MCP 设置页 */
 
@@ -314,6 +377,14 @@ function Preview() {
         onRefresh={() => undefined}
         onClose={() => undefined}
       />
+    );
+  }
+
+  if (panel === "connections") {
+    return (
+      <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
+        <ConnectionsPage />
+      </div>
     );
   }
 

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AppError, fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
+import { jumpCandidates, jumpName } from "../lib/jump";
 import type { AuthType, ConnectionDto, ConnectionInput, TestOutcome } from "../lib/types";
 import { useUiStore } from "../stores/uiStore";
 
@@ -16,6 +17,8 @@ interface FormState {
   keyPath: string;
   keyPassphrase: string;
   legacyAlgorithms: boolean;
+  /** 空串 = 直连。下拉框的值只能是字符串，转成 `null` 的活留给 toInput */
+  jumpConnectionId: string;
 }
 
 type Tone = "ok" | "warn" | "danger";
@@ -38,6 +41,7 @@ const EMPTY_FORM: FormState = {
   keyPath: "",
   keyPassphrase: "",
   legacyAlgorithms: false,
+  jumpConnectionId: "",
 };
 
 function formFrom(dto: ConnectionDto): FormState {
@@ -51,6 +55,7 @@ function formFrom(dto: ConnectionDto): FormState {
     keyPath: dto.keyPath ?? "",
     keyPassphrase: "",
     legacyAlgorithms: dto.legacyAlgorithms,
+    jumpConnectionId: dto.jumpConnectionId ?? "",
   };
 }
 
@@ -66,6 +71,7 @@ function toInput(form: FormState, editing: boolean): ConnectionInput {
     username: form.username.trim(),
     authType: form.authType,
     legacyAlgorithms: form.legacyAlgorithms,
+    jumpConnectionId: form.jumpConnectionId || null,
   };
 
   if (form.authType === "password") {
@@ -391,7 +397,9 @@ export default function ConnectionsPage() {
           </p>
         ) : (
           <ul className="conn-list__items">
-            {items.map((item) => (
+            {items.map((item) => {
+              const jump = jumpName(items, item.jumpConnectionId);
+              return (
               <li key={item.id}>
                 <button
                   type="button"
@@ -405,10 +413,12 @@ export default function ConnectionsPage() {
                   <span className="conn-item__tags">
                     <span className="pill">{item.authType === "password" ? "密码" : "密钥"}</span>
                     {item.legacyAlgorithms ? <span className="pill pill--warn">兼容</span> : null}
+                    {jump ? <span className="pill">经 {jump}</span> : null}
                   </span>
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </aside>
@@ -523,6 +533,27 @@ export default function ConnectionsPage() {
                 />
               </label>
             </div>
+
+            {/* 跳板：留空就是直连。候选里排除自己与会成环的，选不到坏选项 */}
+            <label className="field">
+              <span>经由（跳板机）</span>
+              <select
+                className="input"
+                value={form.jumpConnectionId}
+                onChange={(e) => patch({ jumpConnectionId: e.target.value })}
+              >
+                <option value="">直连（不经跳板）</option>
+                {jumpCandidates(items, editingId).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}（{item.username}@{item.host}:{item.port}）
+                  </option>
+                ))}
+              </select>
+              <em className="field__hint">
+                内网机器连不上时，先选一台能连的机器当跳板。跳板本身也会连它的「经由」，
+                所以可以串多跳；这台机器要先单独连通过一次，跳板的指纹才验得过。
+              </em>
+            </label>
 
             <div className="field">
               <span>认证方式</span>

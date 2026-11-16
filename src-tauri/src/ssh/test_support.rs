@@ -54,6 +54,8 @@ struct Handler {
     /// `data()` 回调里不能跨 await 持有 std MutexGuard，会让 handler future 不 Send。
     sftp_inputs: Arc<Mutex<HashMap<ChannelId, mpsc::UnboundedSender<Vec<u8>>>>>,
     exec_outputs: Arc<Mutex<HashMap<String, String>>>,
+    /// direct-tcpip 通道 → 输入队列（跳板转发用，理由同 sftp_inputs）
+    tunnel_inputs: Arc<Mutex<HashMap<ChannelId, mpsc::UnboundedSender<Vec<u8>>>>>,
 }
 
 impl server::Server for Handler {
@@ -93,6 +95,76 @@ impl server::Handler for Handler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         reply.accept().await;
+        Ok(())
+    }
+
+    /// 当跳板用：接受 `direct-tcpip`，自己往目标建 TCP，再双向搬运。
+    ///
+    /// 真实跳板做的就是这件事。测试里有它，才能端到端验证"隧道里再握一次手"
+    /// —— 否则只能验证到"发了个通道打开请求"，那证明不了流量真的过去了。
+    ///
+    /// 注意这里**不能**直接 `channel.into_stream()`：russh 服务端的入站数据走
+    /// `Handler::data()`，流的读半边根本收不到，那样写出来的"跳板"只会把
+    /// 客户端自己的字节回显回去（表现是握手报 `Bad packet size`）。
+    /// 所以照 SFTP 那套办法用 duplex + mpsc 桥一下。
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: server::ChannelOpenHandle,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let target = format!("{host_to_connect}:{port_to_connect}");
+        let socket = match tokio::net::TcpStream::connect(&target).await {
+            Ok(socket) => socket,
+            // 不 accept 就是拒绝 —— 和真实服务器连不上目标时的表现一致
+            Err(_) => return Ok(()),
+        };
+
+        reply.accept().await;
+        let id = channel.id();
+
+        let (ssh_side, mut target_side) = tokio::io::duplex(256 * 1024);
+        let (input_tx, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        self.tunnel_inputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id, input_tx);
+
+        tokio::spawn(async move {
+            let mut socket = socket;
+            let _ = tokio::io::copy_bidirectional(&mut target_side, &mut socket).await;
+        });
+
+        let handle = session.handle();
+        tokio::spawn(async move {
+            let (mut ssh_read, mut ssh_write) = tokio::io::split(ssh_side);
+            let mut buffer = vec![0u8; 32 * 1024];
+
+            loop {
+                tokio::select! {
+                    Some(chunk) = input_rx.recv() => {
+                        if ssh_write.write_all(&chunk).await.is_err() {
+                            break;
+                        }
+                    }
+                    result = ssh_read.read(&mut buffer) => {
+                        match result {
+                            Ok(0) | Err(_) => break,
+                            Ok(read) => {
+                                if handle.data(id, buffer[..read].to_vec()).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -240,6 +312,19 @@ impl server::Handler for Handler {
             return Ok(());
         }
 
+        // 跳板转发的通道：喂给隧道，绝不能回显
+        let tunnel = self
+            .tunnel_inputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&channel)
+            .cloned();
+
+        if let Some(sender) = tunnel {
+            let _ = sender.send(data.to_vec());
+            return Ok(());
+        }
+
         // 普通终端通道：原样回显，测试就能验证"写进去的字节确实到了对端又回来了"
         let _ = session.data(channel, data.to_vec());
         Ok(())
@@ -349,6 +434,7 @@ fn spawn_inner(
         sftp_root: sftp_root.clone(),
         sftp_inputs: Arc::new(Mutex::new(HashMap::new())),
         exec_outputs: Arc::clone(&exec_outputs),
+        tunnel_inputs: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let handle = tokio::spawn(async move {

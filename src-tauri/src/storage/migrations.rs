@@ -31,6 +31,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "history",
         sql: include_str!("../../migrations/003_history.sql"),
     },
+    Migration {
+        version: 4,
+        name: "connection_jump",
+        sql: include_str!("../../migrations/004_jump.sql"),
+    },
 ];
 
 /// 最新 schema 版本，供自检信息与前端版本校验使用。

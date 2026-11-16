@@ -28,6 +28,8 @@ pub enum ErrCode {
     SshAlgoNegotiation,
     SshDisconnected,
     SshSessionNotFound,
+    /// 跳板机建好了，但它不肯/不能把流量转到目标（direct-tcpip 被拒或目标不可达）
+    SshJumpFailed,
     // ---- SFTP（M3 起使用）
     SftpPermissionDenied,
     SftpNotFound,
@@ -56,6 +58,7 @@ impl ErrCode {
             ErrCode::SshAlgoNegotiation => "与服务器的加密算法协商失败",
             ErrCode::SshDisconnected => "连接已断开",
             ErrCode::SshSessionNotFound => "会话不存在或已关闭",
+            ErrCode::SshJumpFailed => "跳板机无法把连接转发到目标服务器",
             ErrCode::SftpPermissionDenied => "权限不足，无法执行该操作",
             ErrCode::SftpNotFound => "文件或目录不存在",
             ErrCode::SftpIoError => "文件传输失败",
@@ -79,6 +82,7 @@ impl ErrCode {
             ErrCode::SshAlgoNegotiation => "SSH_ALGO_NEGOTIATION",
             ErrCode::SshDisconnected => "SSH_DISCONNECTED",
             ErrCode::SshSessionNotFound => "SSH_SESSION_NOT_FOUND",
+            ErrCode::SshJumpFailed => "SSH_JUMP_FAILED",
             ErrCode::SftpPermissionDenied => "SFTP_PERMISSION_DENIED",
             ErrCode::SftpNotFound => "SFTP_NOT_FOUND",
             ErrCode::SftpIoError => "SFTP_IO_ERROR",

@@ -4,12 +4,15 @@
 //! 也不保存任何会话状态，真正的会话管理在 M2。
 
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use russh::client;
 use russh::keys::{PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{Disconnect, MethodKind, MethodSet};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::hostkey::{decide, describe, HostKeyDecision, HostKeyInfo};
 use super::profile;
@@ -47,6 +50,8 @@ pub(crate) enum Purpose {
     Probe,
     /// 交互式会话：用户读代码、发呆都是常态，不能因为「没数据」就断。
     Session,
+    /// 跳板那一跳：它要一直替后面几跳转发，所以按会话对待，绝不能设空闲超时。
+    Jump,
 }
 
 /// 按用途生成客户端配置。
@@ -61,12 +66,12 @@ pub(crate) fn config_for(purpose: Purpose, legacy_algorithms: bool) -> client::C
         nodelay: true,
         inactivity_timeout: match purpose {
             Purpose::Probe => Some(Duration::from_secs(20)),
-            // 会话不看「空闲多久」，只看 keepalive 有没有回应
-            Purpose::Session => None,
+            // 会话和跳板都不看「空闲多久」，只看 keepalive 有没有回应
+            Purpose::Session | Purpose::Jump => None,
         },
         keepalive_interval: match purpose {
             Purpose::Probe => None,
-            Purpose::Session => Some(KEEPALIVE_INTERVAL),
+            Purpose::Session | Purpose::Jump => Some(KEEPALIVE_INTERVAL),
         },
         keepalive_max: KEEPALIVE_MAX,
         ..Default::default()
@@ -118,6 +123,11 @@ pub struct ProbeRequest {
     pub known_fingerprint: Option<String>,
     /// 用户在确认弹窗里点过「信任」的那枚指纹
     pub trust_fingerprint: Option<String>,
+    /// 先经由哪台机器转发（跳板机）。`None` = 直连。
+    ///
+    /// 递归结构：跳板自己还可以有跳板，于是天然支持多跳（A→B→C），
+    /// 不需要在类型上写死"最多两跳"。层级上限在解析侧限制。
+    pub jump: Option<Box<ProbeRequest>>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +168,15 @@ pub(crate) struct ProbeHandler {
     known: Option<String>,
     trust: Option<String>,
     captured: Arc<Mutex<Option<HostKeyInfo>>>,
+    /// 跳板链的句柄。
+    ///
+    /// 放在 handler 里不是随手一放：russh 把 handler 移进连接任务，
+    /// **它的生命周期正好等于这段连接**。于是"跳板活到本段连接结束"这件事
+    /// 不需要调用方额外接力持有 —— 少一个可以忘记的字段。
+    ///
+    /// 只持有不读取，`dead_code` 是预期内的。
+    #[allow(dead_code)]
+    holds: Vec<Arc<client::Handle<ProbeHandler>>>,
 }
 
 impl client::Handler for ProbeHandler {
@@ -196,23 +215,40 @@ impl client::Handler for ProbeHandler {
 ///
 /// `probe` 用完即断，`session` 拿它去开 PTY —— 两条路径共用同一套指纹校验与认证逻辑，
 /// 避免出现"测试能连、真连却失败"的分裂。
-pub(crate) async fn establish(
-    req: &ProbeRequest,
+///
+/// 返回 boxed future 是必须的：有跳板时会递归调用自己，而 async fn 的递归
+/// 编译器算不出大小，只能手动装箱。多花一次堆分配，换一条能复用的握手路径。
+pub(crate) fn establish<'a>(
+    req: &'a ProbeRequest,
     purpose: Purpose,
-) -> Result<Established, ProbeResult> {
+) -> Pin<Box<dyn Future<Output = Result<Established, ProbeResult>> + Send + 'a>> {
+    Box::pin(establish_inner(req, purpose))
+}
+
+async fn establish_inner(req: &ProbeRequest, purpose: Purpose) -> Result<Established, ProbeResult> {
     let config = Arc::new(config_for(purpose, req.legacy_algorithms));
 
     let captured = Arc::new(Mutex::new(None));
+    let started = Instant::now();
+
+    // 第一段：先拿到一条"能通到目标 SSH 端口"的字节流。
+    // 直连就是 TCP；有跳板就先建上一跳，让它在通道里替我们转发。
+    // 两条路最终都交给同一个 `connect_stream`，所以握手、指纹、认证逻辑只有一份。
+    let (transport, holds) = match &req.jump {
+        None => (tcp_transport(&req.host, req.port).await?, Vec::new()),
+        Some(jump) => tunnel_transport(jump, req).await?,
+    };
+
     let handler = ProbeHandler {
         known: req.known_fingerprint.clone(),
         trust: req.trust_fingerprint.clone(),
         captured: captured.clone(),
+        holds,
     };
 
-    let started = Instant::now();
     let outcome = tokio::time::timeout(
         CONNECT_TIMEOUT,
-        client::connect(config, (req.host.as_str(), req.port), handler),
+        client::connect_stream(config, transport, handler),
     )
     .await;
 
@@ -251,7 +287,8 @@ pub(crate) async fn establish(
     // 否则服务器接受了 TCP 却一直不回认证结果时，这一步会永久挂起。
     let auth_timeout = match purpose {
         Purpose::Probe => AUTH_TIMEOUT_PROBE,
-        Purpose::Session => AUTH_TIMEOUT_SESSION,
+        // 跳板那一跳认证走会话口径：它连上就要长期用，不能按探活的短超时判死
+        Purpose::Session | Purpose::Jump => AUTH_TIMEOUT_SESSION,
     };
 
     let authed = match tokio::time::timeout(auth_timeout, authenticate(&mut handle, req)).await {
@@ -297,6 +334,128 @@ pub(crate) async fn establish(
         host_key,
         elapsed_ms,
     })
+}
+
+/// 一段「已经能通到目标 SSH 端口」的字节流：直连的 TCP，或跳板上的隧道通道。
+///
+/// 统一成一种类型之后，`establish` 只需要一条握手路径 ——
+/// 指纹校验、认证、超时策略不会再出现「直连能用、跳板那条路漏了」的分裂。
+///
+/// 用自定义 trait 而不是 `dyn AsyncRead + AsyncWrite`：Rust 只允许 trait object
+/// 里出现一个非 auto trait，两个读写 trait 拼在一起编译不过。
+trait TransportIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> TransportIo for T {}
+
+type Transport = Box<dyn TransportIo + 'static>;
+
+/// 直连：自己建 TCP，顺手关掉 Nagle（交互式终端最怕攒包）。
+async fn tcp_transport(host: &str, port: u16) -> Result<Transport, ProbeResult> {
+    let outcome = tokio::time::timeout(CONNECT_TIMEOUT, async {
+        tokio::net::TcpStream::connect((host, port)).await
+    })
+    .await;
+
+    let socket = match outcome {
+        Err(_) => {
+            tracing::warn!(host, port, secs = CONNECT_TIMEOUT.as_secs(), "TCP 连接超时");
+            return Err(ProbeResult::Failed(AppError::new(ErrCode::SshTcpTimeout)));
+        }
+        Ok(Err(err)) => {
+            tracing::warn!(host, port, error = %err, "TCP 连接失败");
+            return Err(ProbeResult::Failed(AppError::with_detail(
+                ErrCode::SshTcpTimeout,
+                err.to_string(),
+            )));
+        }
+        Ok(Ok(socket)) => socket,
+    };
+
+    if let Err(err) = socket.set_nodelay(true) {
+        tracing::warn!(host, port, error = %err, "set_nodelay 失败，继续");
+    }
+    Ok(Box::new(socket))
+}
+
+/// 跳板：先建上一跳（它自己可能还有跳板），再让它在 SSH 通道里替我们转发到目标。
+///
+/// 这里用的是标准 `direct-tcpip` 通道 —— 和 `ssh -J` 做的事完全一样，
+/// 只是把"通道"当成一条普通字节流交给下一段握手，于是目标机根本不知道自己在隧道里。
+async fn tunnel_transport(
+    jump: &ProbeRequest,
+    req: &ProbeRequest,
+) -> Result<(Transport, Vec<Arc<client::Handle<ProbeHandler>>>), ProbeResult> {
+    let hop = establish(jump, Purpose::Jump)
+        .await
+        .map_err(|result| jump_failure(jump, result))?;
+
+    let hop_handle = Arc::new(hop.handle);
+
+    let channel = hop_handle
+        .channel_open_direct_tcpip(
+            req.host.clone(),
+            u32::from(req.port),
+            "127.0.0.1".to_string(),
+            0,
+        )
+        .await
+        .map_err(|err| {
+            ProbeResult::Failed(AppError::with_detail(
+                ErrCode::SshJumpFailed,
+                format!(
+                    "跳板机 {} 无法转发到 {}:{}（{err}）：可能是跳板到目标之间不通，或跳板禁止了转发",
+                    hop_label(jump),
+                    req.host,
+                    req.port
+                ),
+            ))
+        })?;
+
+    // into_stream 之后，通道自己握着跳板会话的发送端：隧道活多久由最外层连接决定
+    Ok((Box::new(channel.into_stream()), vec![hop_handle]))
+}
+
+/// 把"跳板那一跳失败"翻译成能照着做的结论。
+///
+/// 不能把内层结果原样扔出去：用户会看到「首次连接该主机，请确认指纹」，
+/// 却不知道要确认的是跳板还是目标 —— 指纹弹窗是对不上的。
+fn jump_failure(jump: &ProbeRequest, result: ProbeResult) -> ProbeResult {
+    let label = hop_label(jump);
+    match result {
+        ProbeResult::NeedsConfirmation { fingerprint, .. } => {
+            ProbeResult::Failed(AppError::with_detail(
+                ErrCode::SshHostKeyUnknown,
+                format!(
+                    "跳板机 {label} 是首次连接（指纹 {fingerprint}）。请先在「连接」页对它单独测一次并确认指纹，再连目标"
+                ),
+            ))
+        }
+        ProbeResult::HostKeyChanged { stored, .. } => {
+            ProbeResult::Failed(AppError::with_detail(
+                ErrCode::SshHostKeyMismatch,
+                format!("跳板机 {label} 的主机指纹变了（原记录 {stored}），已阻断；确认是服务器重装再清除记录"),
+            ))
+        }
+        ProbeResult::CertificateUnsupported => ProbeResult::Failed(AppError::with_detail(
+            ErrCode::SshHostKeyUnknown,
+            format!("跳板机 {label} 出示的是主机证书，暂不支持"),
+        )),
+        ProbeResult::Failed(err) => {
+            let detail = err.detail.unwrap_or_else(|| err.message.to_string());
+            ProbeResult::Failed(AppError::with_detail(
+                err.code,
+                format!("跳板机 {label}：{detail}"),
+            ))
+        }
+        // establish 只会返回 Ok / 上面这几种，走不到这里；保守地当失败处理
+        ProbeResult::Connected(_) => ProbeResult::Failed(AppError::with_detail(
+            ErrCode::SshJumpFailed,
+            format!("跳板机 {label} 返回了意外的状态"),
+        )),
+    }
+}
+
+fn hop_label(jump: &ProbeRequest) -> String {
+    format!("{}:{}", jump.host, jump.port)
 }
 
 pub async fn probe(req: ProbeRequest) -> ProbeResult {
@@ -546,6 +705,7 @@ mod tests {
             legacy_algorithms: false,
             known_fingerprint: None,
             trust_fingerprint: None,
+            jump: None,
         };
 
         let rendered = format!("{request:?}");
@@ -613,6 +773,109 @@ mod tests {
             legacy_algorithms: false,
             known_fingerprint: None,
             trust_fingerprint: None,
+            jump: None,
+        }
+    }
+
+    /// 拿一台测试服务端的指纹（第一次连必然要确认，正好用来取指纹）。
+    async fn fingerprint_of(port: u16) -> String {
+        match probe(base(port)).await {
+            ProbeResult::NeedsConfirmation { fingerprint, .. } => fingerprint,
+            other => panic!("期望拿到首次连接确认，实际 {other:?}"),
+        }
+    }
+
+    /// 跳板这一跳的指纹不能借用目标的"我信任"：那是两段独立的主机密钥。
+    #[tokio::test]
+    async fn jump_host_needs_its_own_confirmation() {
+        let target = spawn("pw", HostKey::Ed25519, false);
+        let jump = spawn("pw", HostKey::Ed25519, false);
+
+        let mut req = base(target.port);
+        req.jump = Some(Box::new(base(jump.port)));
+
+        match probe(req).await {
+            ProbeResult::Failed(err) => {
+                assert_eq!(err.code, ErrCode::SshHostKeyUnknown);
+                let detail = err.detail.unwrap_or_default();
+                assert!(
+                    detail.contains("跳板机"),
+                    "文案要点明是跳板要确认：{detail}"
+                );
+            }
+            other => panic!("期望因跳板指纹未知而失败，实际 {other:?}"),
+        }
+    }
+
+    /// 端到端：真的在跳板的 direct-tcpip 通道里完成第二段握手。
+    ///
+    /// 判定方式是"拿到的是目标的指纹" —— 只有流量真的走到了目标机才可能拿到。
+    #[tokio::test]
+    async fn traffic_reaches_the_target_through_the_jump_host() {
+        let target = spawn("pw", HostKey::Ed25519, false);
+        let jump = spawn("pw", HostKey::Ed25519, false);
+
+        let jump_fp = fingerprint_of(jump.port).await;
+        let target_fp = fingerprint_of(target.port).await;
+
+        let mut jump_req = base(jump.port);
+        jump_req.trust_fingerprint = Some(jump_fp.clone());
+
+        let mut req = base(target.port);
+        req.jump = Some(Box::new(jump_req));
+
+        // 跳板已信任、目标还没确认：应当直接问到目标的指纹
+        match probe(req).await {
+            ProbeResult::NeedsConfirmation { fingerprint, .. } => {
+                assert_eq!(fingerprint, target_fp, "隧道里握手拿到的必须是目标的指纹");
+            }
+            other => panic!("期望跳过跳板、问到目标指纹，实际 {other:?}"),
+        }
+
+        let mut jump_req = base(jump.port);
+        jump_req.trust_fingerprint = Some(jump_fp);
+
+        let mut req = base(target.port);
+        req.trust_fingerprint = Some(target_fp);
+        req.jump = Some(Box::new(jump_req));
+
+        match probe(req).await {
+            ProbeResult::Connected(info) => assert!(info.elapsed_ms > 0),
+            other => panic!("期望两段都信任后连通，实际 {other:?}"),
+        }
+    }
+
+    /// 跳板连不上目标（端口没人听）时，要给"转发失败"而不是含糊的"连不上服务器"。
+    #[tokio::test]
+    async fn jump_reports_forwarding_failure_explicitly() {
+        let jump = spawn("pw", HostKey::Ed25519, false);
+        let jump_fp = fingerprint_of(jump.port).await;
+
+        // 找一个没人监听的端口
+        let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_port = dead.local_addr().unwrap().port();
+        drop(dead);
+
+        let mut jump_req = base(jump.port);
+        jump_req.trust_fingerprint = Some(jump_fp);
+
+        let mut req = base(dead_port);
+        req.jump = Some(Box::new(jump_req));
+
+        match probe(req).await {
+            ProbeResult::Failed(err) => {
+                assert_eq!(err.code, ErrCode::SshJumpFailed);
+                let detail = err.detail.unwrap_or_default();
+                assert!(
+                    detail.contains("无法转发"),
+                    "文案要说是转发这一步：{detail}"
+                );
+                assert!(
+                    detail.contains(&dead_port.to_string()),
+                    "文案要带目标端口：{detail}"
+                );
+            }
+            other => panic!("期望 SshJumpFailed，实际 {other:?}"),
         }
     }
 

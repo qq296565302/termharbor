@@ -31,6 +31,8 @@ pub struct ConnectionDto {
     pub key_path: Option<String>,
     pub has_key_passphrase: bool,
     pub legacy_algorithms: bool,
+    /// 经由哪条连接做跳板；`None` = 直连
+    pub jump_connection_id: Option<String>,
     pub last_used_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -49,6 +51,7 @@ impl From<&ConnectionRecord> for ConnectionDto {
             key_path: rec.key_path.clone(),
             has_key_passphrase: rec.key_pass_blob.is_some(),
             legacy_algorithms: rec.legacy_algorithms,
+            jump_connection_id: rec.jump_connection_id.clone(),
             last_used_at: rec.last_used_at,
             created_at: rec.created_at,
             updated_at: rec.updated_at,
@@ -73,6 +76,9 @@ pub struct ConnectionInput {
     pub key_passphrase: Option<String>,
     #[serde(default)]
     pub legacy_algorithms: bool,
+    /// 「经由」哪条连接做跳板。前端总是整份提交：`null` = 直连。
+    #[serde(default)]
+    pub jump_connection_id: Option<String>,
 }
 
 /// **手写 Debug，不打印密码与口令。**
@@ -95,9 +101,16 @@ impl fmt::Debug for ConnectionInput {
                 &self.key_passphrase.as_ref().map(|_| "***"),
             )
             .field("legacy_algorithms", &self.legacy_algorithms)
+            .field("jump_connection_id", &self.jump_connection_id)
             .finish()
     }
 }
+
+/// 跳板最多几层。
+///
+/// 三跳足够覆盖「公网入口 → 堡垒机 → 内网跳板 → 目标」这种常见内网纵深；
+/// 再多半是配错了（或者成环），限制住能让失败快速暴露而不是连到超时。
+const MAX_JUMP_HOPS: usize = 3;
 
 /// 敏感字段的更新语义。
 enum SecretPatch {
@@ -146,6 +159,7 @@ pub async fn connection_create(
         auth_type,
     );
     rec.legacy_algorithms = input.legacy_algorithms;
+    rec.jump_connection_id = normalize_jump(input.jump_connection_id.clone());
 
     match auth_type {
         AuthType::Password => {
@@ -164,15 +178,21 @@ pub async fn connection_create(
         }
     }
 
-    state
+    // 「经由」可能指向刚被删掉的连接，也可能被配成环 —— 保存时就拦掉
+    let rec = state
         .db
         .call({
             let rec = rec.clone();
-            move |conn| connections::insert(conn, &rec)
+            move |conn| {
+                let mut rec = rec;
+                apply_jump(conn, &mut rec)?;
+                connections::insert(conn, &rec)?;
+                Ok(rec)
+            }
         })
         .await?;
 
-    tracing::info!(id = %rec.id, name = %rec.name, "已保存连接配置");
+    tracing::info!(id = %rec.id, name = %rec.name, jump = ?rec.jump_connection_id, "已保存连接配置");
     Ok(ConnectionDto::from(&rec))
 }
 
@@ -198,6 +218,7 @@ pub async fn connection_update(
             rec.port = input.port;
             rec.username = input.username.trim().to_string();
             rec.legacy_algorithms = input.legacy_algorithms;
+            rec.jump_connection_id = normalize_jump(input.jump_connection_id.clone());
 
             // 切换认证方式时要清理另一侧的残留，否则库里会留下永远解不开的密文
             match auth_type {
@@ -224,6 +245,7 @@ pub async fn connection_update(
                 return Err(AppError::validation("密码认证需要填写密码"));
             }
 
+            apply_jump(conn, &mut rec)?;
             connections::update(conn, &rec)?;
             Ok(rec)
         })
@@ -289,6 +311,8 @@ struct Target {
     username: String,
     auth: ProbeAuth,
     legacy_algorithms: bool,
+    /// 「经由」哪条连接（已规范化：空值 = 直连）
+    jump_connection_id: Option<String>,
 }
 
 /// 测试连接。
@@ -488,6 +512,7 @@ async fn resolve_target(
         username: input.username.trim().to_string(),
         auth,
         legacy_algorithms: input.legacy_algorithms,
+        jump_connection_id: normalize_jump(input.jump_connection_id),
     })
 }
 
@@ -520,6 +545,12 @@ pub(crate) async fn prepare_probe(
         })
         .await?;
 
+    // 跳板链：只有「经由」是保存过的连接才可能成链，所以这里一定查得到记录
+    let jump = match target.jump_connection_id.clone() {
+        Some(jump_id) => Some(Box::new(jump_probe(state, &jump_id).await?)),
+        None => None,
+    };
+
     Ok(PreparedProbe {
         request: ProbeRequest {
             host: target.host,
@@ -529,10 +560,63 @@ pub(crate) async fn prepare_probe(
             legacy_algorithms: target.legacy_algorithms,
             known_fingerprint: known.map(|record| record.fingerprint),
             trust_fingerprint,
+            jump,
         },
         connection_id: target.id,
         display_name: target.name,
         host_label,
+    })
+}
+
+/// 把「经由 xxx」展开成一串嵌套的探测请求（多跳）。
+///
+/// `jump_chain` 给的是"最近的一跳在前"（目标→B→A 得到 `[B, A]`），
+/// 所以要**从最远端开始往里套**：A 先建好，再在它上面建 B，最后才是目标。
+async fn jump_probe(state: &AppState, jump_id: &str) -> AppResult<ProbeRequest> {
+    let chain = state
+        .db
+        .call({
+            let id = jump_id.to_string();
+            move |conn| connections::jump_chain(conn, &id, MAX_JUMP_HOPS)
+        })
+        .await?;
+
+    let mut nested: Option<Box<ProbeRequest>> = None;
+    for rec in chain.iter().rev() {
+        let mut probe = probe_for_record(state, rec).await?;
+        probe.jump = nested.take();
+        nested = Some(Box::new(probe));
+    }
+
+    nested
+        .map(|boxed| *boxed)
+        .ok_or_else(|| AppError::validation("「经由」指向的连接链是空的，请重新选择跳板"))
+}
+
+/// 由一条已保存的连接构造探测请求（解密凭据 + 取指纹记录）。
+///
+/// 跳板这一跳的 `trust_fingerprint` 恒为 `None`：用户的"我信任这个指纹"
+/// 只针对他要连的那台机器，不能顺带给跳板也放行 —— 那样等于绕过跳板的校验。
+async fn probe_for_record(state: &AppState, rec: &ConnectionRecord) -> AppResult<ProbeRequest> {
+    let target = saved_target(state, rec)?;
+    let host_label = host_key_id(&target.host, target.port);
+    let known = state
+        .db
+        .call({
+            let host_label = host_label.clone();
+            move |conn| known_hosts::find(conn, &host_label)
+        })
+        .await?;
+
+    Ok(ProbeRequest {
+        host: target.host,
+        port: target.port,
+        username: target.username,
+        auth: target.auth,
+        legacy_algorithms: target.legacy_algorithms,
+        known_fingerprint: known.map(|record| record.fingerprint),
+        trust_fingerprint: None,
+        jump: None,
     })
 }
 
@@ -560,7 +644,52 @@ fn saved_target(state: &AppState, rec: &ConnectionRecord) -> AppResult<Target> {
         username: rec.username.clone(),
         auth,
         legacy_algorithms: rec.legacy_algorithms,
+        jump_connection_id: normalize_jump(rec.jump_connection_id.clone()),
     })
+}
+
+/// 「经由」的规范化与落库校验。
+///
+/// 三件事，都在保存时当场判掉，不留到连接时才炸：
+/// - 空串 / 纯空白 = 直连（前端清空下拉时会传空串）；
+/// - 不能选自己；
+/// - 不能成环 —— 从跳板那一头往上走，撞到自己就是环。
+fn apply_jump(conn: &rusqlite::Connection, rec: &mut ConnectionRecord) -> AppResult<()> {
+    let Some(jump_id) = normalize_jump(rec.jump_connection_id.clone()) else {
+        rec.jump_connection_id = None;
+        return Ok(());
+    };
+    rec.jump_connection_id = Some(jump_id.clone());
+
+    if jump_id == rec.id {
+        return Err(AppError::validation("「经由」不能选这条连接自己"));
+    }
+
+    let mut cursor = Some(jump_id);
+    let mut walked = 0usize;
+    while let Some(id) = cursor {
+        if walked > MAX_JUMP_HOPS {
+            return Err(AppError::validation(format!(
+                "跳板最多 {MAX_JUMP_HOPS} 层，请检查「经由」是不是配错了"
+            )));
+        }
+        if id == rec.id {
+            return Err(AppError::validation(
+                "这样配「经由」会绕回这条连接自己（成环），请改掉其中一条",
+            ));
+        }
+        let node = connections::get(conn, &id).map_err(|_| {
+            AppError::validation("「经由」指定的连接不存在，可能已被删除，请重新选择")
+        })?;
+        cursor = normalize_jump(node.jump_connection_id);
+        walked += 1;
+    }
+
+    Ok(())
+}
+
+fn normalize_jump(raw: Option<String>) -> Option<String> {
+    raw.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -578,6 +707,7 @@ mod tests {
             key_path: None,
             key_passphrase: None,
             legacy_algorithms: false,
+            jump_connection_id: None,
         }
     }
 
@@ -658,6 +788,7 @@ mod tests {
             key_path: Some("/home/u/.ssh/id_ed25519".to_string()),
             key_passphrase: Some("key-Passw0rd".to_string()),
             legacy_algorithms: false,
+            jump_connection_id: None,
         };
 
         let rendered = format!("{input:?}");

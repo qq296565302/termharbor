@@ -68,6 +68,12 @@ pub struct Entry {
     pub key_path: Option<String>,
     #[serde(default)]
     pub legacy_algorithms: bool,
+    /// 跳板机的**名字**，只为了让人看懂这条依赖谁。
+    ///
+    /// 刻意不导出 id：导出文件里的 id 在新机器上不存在，靠 id 还原只会造出死链。
+    /// 导入时忽略这个字段 —— 跳板关系需要在新环境里重新选一次。
+    #[serde(default)]
+    pub jump_name: Option<String>,
 }
 
 /// 校验后的一条连接：认证方式已解析，字符串已裁剪。
@@ -99,6 +105,12 @@ pub fn export_document(records: &[ConnectionRecord], app_version: &str) -> Docum
         connections: records
             .iter()
             .map(|rec| Entry {
+                jump_name: rec.jump_connection_id.as_deref().and_then(|id| {
+                    records
+                        .iter()
+                        .find(|other| other.id == id)
+                        .map(|other| other.name.clone())
+                }),
                 name: rec.name.clone(),
                 host: rec.host.clone(),
                 port: rec.port,

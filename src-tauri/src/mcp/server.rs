@@ -258,6 +258,7 @@ mod tests {
             port: 22,
             username: "root".into(),
             auth_type: crate::storage::connections::AuthType::Password,
+            jump_connection_id: None,
             secret_blob: None,
             key_path: None,
             key_pass_blob: None,

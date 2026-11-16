@@ -758,6 +758,7 @@ Filesystem      Size  Used Avail Use% Mounted on
                 legacy_algorithms: false,
                 known_fingerprint: None,
                 trust_fingerprint: None,
+                jump: None,
             }
         }
 

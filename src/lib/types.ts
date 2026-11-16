@@ -44,6 +44,8 @@ export interface ConnectionDto {
   keyPath: string | null;
   hasKeyPassphrase: boolean;
   legacyAlgorithms: boolean;
+  /** 经由哪条连接做跳板；`null` = 直连 */
+  jumpConnectionId: string | null;
   lastUsedAt: number | null;
   createdAt: number;
   updatedAt: number;
@@ -65,6 +67,8 @@ export interface ConnectionInput {
   keyPath?: string;
   keyPassphrase?: string;
   legacyAlgorithms: boolean;
+  /** 整份提交：`null` = 直连 */
+  jumpConnectionId?: string | null;
 }
 
 /** 对应 `commands/connections.rs::TestOutcome`（serde 内部标签枚举） */
