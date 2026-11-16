@@ -17,6 +17,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoPack: true,
   packThreshold: 5,
   monitorInterfaces: "",
+  filesAutoOpen: true,
+  filesProtocol: "auto",
 };
 
 interface SettingsState {

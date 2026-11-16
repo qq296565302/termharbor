@@ -271,7 +271,14 @@ export interface Settings {
   packThreshold: number;
   /** 负载看板显示的网卡，逗号分隔；空串 = 全部 */
   monitorInterfaces: string;
+  /** 连上服务器后自动展开文件面板 */
+  filesAutoOpen: boolean;
+  /** 文件面板的协议：`auto` 先 SFTP、失败退 SCP */
+  filesProtocol: FileProtocol;
 }
+
+/** 文件面板协议，对应 `commands::settings::FileProtocol` */
+export type FileProtocol = "auto" | "sftp" | "scp";
 
 /** 对应 `snippets::EnvStatus` */
 export interface EnvStatus {

@@ -30,6 +30,8 @@ const KEY_COMMAND_BAR: &str = "terminal.commandBar";
 const KEY_AUTO_PACK: &str = "transfer.autoPack";
 const KEY_PACK_THRESHOLD: &str = "transfer.packThreshold";
 const KEY_MONITOR_INTERFACES: &str = "monitor.interfaces";
+const KEY_FILES_AUTO_OPEN: &str = "files.autoOpen";
+const KEY_FILES_PROTOCOL: &str = "files.protocol";
 
 /// 字号范围。下限保证 80 列还能塞进窗口，上限是"再大就只看得见几个字"。
 const FONT_SIZE_MIN: u32 = 10;
@@ -107,6 +109,37 @@ impl UiTheme {
     }
 }
 
+/// 文件面板用哪种协议。
+///
+/// `auto` = 先试 SFTP，服务器没开子系统时退回 SCP；
+/// 另外两个是用户强制指定（有些服务器 SFTP 能用但权限怪异，或反过来）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileProtocol {
+    Auto,
+    Sftp,
+    Scp,
+}
+
+impl FileProtocol {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "sftp" => Some(Self::Sftp),
+            "scp" => Some(Self::Scp),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Sftp => "sftp",
+            Self::Scp => "scp",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -127,6 +160,10 @@ pub struct Settings {
     pub pack_threshold: u32,
     /// 负载看板要显示的网卡，逗号分隔；空串 = 全部。纯界面偏好。
     pub monitor_interfaces: String,
+    /// 连上服务器后自动展开文件面板。默认开：这是「终端 + 文件联动」的主入口。
+    pub files_auto_open: bool,
+    /// 文件面板走哪种协议（见 `FileProtocol`）。
+    pub files_protocol: FileProtocol,
 }
 
 impl Default for Settings {
@@ -142,6 +179,8 @@ impl Default for Settings {
             auto_pack: true,
             pack_threshold: 5,
             monitor_interfaces: String::new(),
+            files_auto_open: true,
+            files_protocol: FileProtocol::Auto,
         }
     }
 }
@@ -192,6 +231,18 @@ impl Settings {
         if let Some(value) = pairs.get(KEY_MONITOR_INTERFACES) {
             settings.monitor_interfaces = value.clone();
         }
+        if let Some(value) = pairs
+            .get(KEY_FILES_AUTO_OPEN)
+            .and_then(|raw| parse_bool(raw))
+        {
+            settings.files_auto_open = value;
+        }
+        if let Some(value) = pairs
+            .get(KEY_FILES_PROTOCOL)
+            .and_then(|raw| FileProtocol::parse(raw))
+        {
+            settings.files_protocol = value;
+        }
 
         settings.sanitized()
     }
@@ -219,6 +270,14 @@ impl Settings {
             (
                 KEY_MONITOR_INTERFACES.to_string(),
                 self.monitor_interfaces.clone(),
+            ),
+            (
+                KEY_FILES_AUTO_OPEN.to_string(),
+                self.files_auto_open.to_string(),
+            ),
+            (
+                KEY_FILES_PROTOCOL.to_string(),
+                self.files_protocol.as_str().to_string(),
             ),
         ]
     }
@@ -462,6 +521,8 @@ mod tests {
             auto_pack: false,
             pack_threshold: 3,
             monitor_interfaces: "eth0,eth1".to_string(),
+            files_auto_open: false,
+            files_protocol: FileProtocol::Scp,
         };
         let restored = Settings::from_pairs(&original.to_pairs().into_iter().collect());
         assert_eq!(restored, original);

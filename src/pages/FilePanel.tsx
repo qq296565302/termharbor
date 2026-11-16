@@ -108,6 +108,28 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
   }, [notice]);
   /** 拖拽本地文件悬停在面板上时的高亮 */
   const [dragOver, setDragOver] = useState(false);
+  /**
+   * 视图模式：列表 / 网格。按连接记在 localStorage ——
+   * 这是纯界面偏好，不值得占 settings 表的一行（那边是跨设备语义）。
+   */
+  const [view, setView] = useState<"list" | "grid">(() => {
+    try {
+      return globalThis.localStorage?.getItem(`termharbor.filesView.${connectionId}`) === "grid"
+        ? "grid"
+        : "list";
+    } catch {
+      return "list";
+    }
+  });
+
+  const changeView = (next: "list" | "grid") => {
+    setView(next);
+    try {
+      globalThis.localStorage?.setItem(`termharbor.filesView.${connectionId}`, next);
+    } catch {
+      // 存不进去只是下次回到列表视图，不影响使用
+    }
+  };
   /** 右键菜单。`entry` 为 null 表示点在空白处（只给目录级操作）。 */
   const [menu, setMenu] = useState<{ x: number; y: number; entry: RemoteEntry | null } | null>(null);
 
@@ -693,6 +715,35 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
           打包下载
         </button>
 
+        <span className="files-bar__divider" />
+
+        {/* 视图切换：图标按钮，title 说明，不占横向空间 */}
+        <div className="files-view">
+          <button
+            type="button"
+            className={`btn btn--ghost btn--icon btn--sm ${view === "list" ? "is-on" : ""}`}
+            title="列表视图"
+            aria-label="列表视图"
+            onClick={() => changeView("list")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M5.6 4.2h7.6M5.6 8h7.6M5.6 11.8h7.6" />
+              <path d="M3 4.2h.1M3 8h.1M3 11.8h.1" strokeWidth="2" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--icon btn--sm ${view === "grid" ? "is-on" : ""}`}
+            title="网格视图"
+            aria-label="网格视图"
+            onClick={() => changeView("grid")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 3h4.2v4.2H3zM8.8 3H13v4.2H8.8zM3 8.8h4.2V13H3zM8.8 8.8H13V13H8.8z" />
+            </svg>
+          </button>
+        </div>
+
         <span className="files-bar__spacer" />
         {compact ? null : (
           <span className="files-bar__home" title={`家目录 ${home}`}>
@@ -743,6 +794,87 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
         </div>
       ) : null}
 
+      {view === "grid" ? (
+        <div className="files-grid" onContextMenu={(event) => openMenu(event, null)}>
+          {entries.length === 0 && !busy ? (
+            <p className="files-hint files-hint--pad">
+              这个目录是空的。可以把本地文件直接拖进这个面板上传。
+            </p>
+          ) : null}
+
+          {entries.map((entry) => {
+            const renaming = action?.kind === "rename" && action.entry.path === entry.path;
+            const deleting = action?.kind === "delete" && action.entry.path === entry.path;
+
+            return (
+              <div
+                key={entry.path}
+                className={`files-card ${entry.isDir ? "is-dir" : ""}`}
+                onContextMenu={(event) => openMenu(event, entry)}
+              >
+                {renaming ? (
+                  <div className="files-card__edit">
+                    <input
+                      className="input"
+                      autoFocus
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void renameEntry(entry);
+                        if (event.key === "Escape") setAction(null);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn--primary btn--sm"
+                      onClick={() => void renameEntry(entry)}
+                    >
+                      保存
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="files-card__main"
+                    title={entry.isDir ? `进入 ${entry.name}` : `${entry.name}（双击下载）`}
+                    onClick={() => {
+                      if (entry.isDir) void load(sessionId, entry.path);
+                    }}
+                    onDoubleClick={() => {
+                      if (!entry.isDir) void download(entry);
+                    }}
+                  >
+                    <span className="files-card__icon">
+                      <EntryGlyph isDir={entry.isDir} isSymlink={entry.isSymlink} />
+                    </span>
+                    <span className="files-card__name">{entry.name}</span>
+                    <span className="files-card__meta">
+                      {entry.isDir ? "文件夹" : formatSize(entry.size)}
+                    </span>
+                  </button>
+                )}
+
+                {deleting ? (
+                  <div className="files-card__confirm">
+                    <span className="files-danger">确认删除？</span>
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--danger"
+                      disabled={busy}
+                      onClick={() => void removeEntry(entry)}
+                    >
+                      删除
+                    </button>
+                    <button type="button" className="btn btn--sm" onClick={() => setAction(null)}>
+                      取消
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div className="files-table" onContextMenu={(event) => openMenu(event, null)}>
         <div className="files-row files-row--head">
           <span>名称</span>
@@ -886,6 +1018,8 @@ export default function FilePanel({ connectionId, compact = false, cdTarget }: F
           );
         })}
       </div>
+
+      )}
 
       {transfers.length > 0 ? (
         <div className="files-transfers">

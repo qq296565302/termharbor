@@ -434,6 +434,7 @@ export default function TerminalPage() {
   const backgroundImage = useSettingsStore((state) => state.settings.backgroundImage);
   const backgroundOpacity = useSettingsStore((state) => state.settings.backgroundOpacity);
   const commandBar = useSettingsStore((state) => state.settings.commandBar);
+  const filesAutoOpen = useSettingsStore((state) => state.settings.filesAutoOpen);
   const connectionsRevision = useUiStore((state) => state.connectionsRevision);
 
   /**
@@ -476,6 +477,13 @@ export default function TerminalPage() {
   >(null);
   /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
   const [filePanels, setFilePanels] = useState<string[]>([]);
+  /**
+   * 已经"处理过自动展开"的标签。
+   *
+   * 里面既包括自动展开过的，也包括用户手动关掉的 —— 后者尤其重要：
+   * 用户明确把面板收起来，就不该因为切个标签、重连一次又弹回来。
+   */
+  const autoFilesHandled = useRef<Set<string>>(new Set());
   /**
    * 每个标签最近一次 `cd` 的参数，喂给对应的文件面板。
    *
@@ -705,6 +713,27 @@ export default function TerminalPage() {
    * 刷新时保留上一次结果（同一种诊断），否则每点一次「刷新」表格都会闪一下消失。
    */
   /**
+   * 连上就自动展开文件面板（「终端 + 文件联动」的主入口）。
+   *
+   * 三条克制：
+   * - 只认**当前标签**，别在后台标签悄悄建 SFTP 会话；
+   * - 用户已经开着别的侧栏（片段/负载）时不抢，免得切走他正在看的；
+   * - 每个标签只自动展开一次，用户关掉后不再弹。
+   */
+  useEffect(() => {
+    if (!filesAutoOpen || !activeTabId) return;
+
+    const tab = tabs.find((item) => item.tabId === activeTabId);
+    if (!tab || tab.status !== "ready" || !tab.sessionId) return;
+    if (autoFilesHandled.current.has(activeTabId)) return;
+    if (sidePanel !== null) return;
+
+    autoFilesHandled.current.add(activeTabId);
+    setFilePanels((prev) => (prev.includes(activeTabId) ? prev : [...prev, activeTabId]));
+    setSidePanel("files");
+  }, [filesAutoOpen, activeTabId, tabs, sidePanel]);
+
+  /**
    * 文件面板按标签挂载：当前标签第一次打开面板时才挂，
    * 之后切走保留挂载（`hidden`），否则每切一次标签都要重连 SFTP。
    */
@@ -756,7 +785,17 @@ export default function TerminalPage() {
 
   /** 再点一次同一个按钮就收起。 */
   const togglePanel = (panel: "snippet" | "files" | "load" | "advanced") => {
+    // 手动收起文件面板 = 明确表态"这次不用它"，别再被自动展开弹回来
+    if (panel === "files" && sidePanel === "files" && activeTabId) {
+      autoFilesHandled.current.add(activeTabId);
+    }
     setSidePanel((current) => (current === panel ? null : panel));
+  };
+
+  /** 文件面板右上角的 ✕：同样是"用户关掉了"。 */
+  const closeFilesPanel = () => {
+    if (activeTabId) autoFilesHandled.current.add(activeTabId);
+    setSidePanel(null);
   };
 
   const openDiag = async (kind: DiagKind, label: string) => {
@@ -1081,7 +1120,7 @@ export default function TerminalPage() {
                 type="button"
                 className="term-files__close"
                 title="收起文件面板（连接保留，下次打开不用重连；要断开请点面板里的「断开」）"
-                onClick={() => setSidePanel(null)}
+                onClick={closeFilesPanel}
               >
                 ×
               </button>

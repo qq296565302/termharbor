@@ -359,6 +359,24 @@ export default function SettingsPage() {
 
       <section className="settings__group">
         <div className="settings__label">
+          <span>文件面板</span>
+        </div>
+        <label className="settings__switch-row">
+          <input
+            type="checkbox"
+            checked={settings.filesAutoOpen}
+            onChange={(event) => change({ filesAutoOpen: event.target.checked })}
+          />
+          <span>连上服务器后自动展开文件面板</span>
+        </label>
+        <p className="settings__hint">
+          展开时直接列出远端目录，终端里 <code>cd</code> 它会跟着跳。
+          你手动收起之后，同一个标签不会再被自动弹出来。
+        </p>
+      </section>
+
+      <section className="settings__group">
+        <div className="settings__label">
           <span>打包传输</span>
         </div>
         <label className="settings__switch-row">

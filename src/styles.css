@@ -3589,6 +3589,104 @@ a:focus-visible,
   min-height: 0;
 }
 
+/* ---- 文件面板：视图切换 ---- */
+.files-view {
+  display: inline-flex;
+  gap: 2px;
+}
+
+/* 选中态用底色而不是描边：工具条上已经有一堆边框，再加一圈会脏 */
+.files-view .btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---- 文件面板：网格视图 ---- */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 10px;
+  overflow-y: auto;
+  align-content: start;
+}
+
+.files-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+}
+
+.files-card:hover {
+  border-color: var(--border);
+  background: var(--bg-subtle);
+}
+
+.files-card__main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 8px 8px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+}
+
+.files-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--text-muted);
+}
+
+.files-card.is-dir .files-card__icon {
+  color: var(--accent);
+}
+
+.files-card__name {
+  width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  /* 文件名最多两行，超出打点：网格视图里长名字比列表更碍事 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-all;
+}
+
+.files-card__meta {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.files-card__edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.files-card__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px 8px;
+}
+
 .term-files__slot {
   display: flex;
   flex: 1;
