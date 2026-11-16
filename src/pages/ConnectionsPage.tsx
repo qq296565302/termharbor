@@ -4,7 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import { AppError, fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
 import { jumpCandidates, jumpName } from "../lib/jump";
-import type { AuthType, ConnectionDto, ConnectionInput, TestOutcome } from "../lib/types";
+import type {
+  AuthType,
+  ConnectionDto,
+  ConnectionInput,
+  ImportCandidate,
+  ImportPreview,
+  TestOutcome,
+} from "../lib/types";
 import { useUiStore } from "../stores/uiStore";
 
 interface FormState {
@@ -104,6 +111,17 @@ export default function ConnectionsPage() {
     null,
   );
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /**
+   * 导入前待确认的跳板配对。
+   *
+   * 导出文件里只有跳板的**名字**（id 跨机器没意义），所以导入时不能自动还原：
+   * 同名不代表同一台机器，猜错会静默连到别处。这里把线索摆出来让用户点一下。
+   */
+  const [pendingImport, setPendingImport] = useState<{
+    path: string;
+    candidates: ImportCandidate[];
+    rows: { key: string; name: string; jumpName: string; choice: string }[];
+  } | null>(null);
   // 终端页常驻挂载，落库后必须发信号让它重新拉列表，否则新连接在终端页看不见
   const bumpConnections = useUiStore((state) => state.bumpConnections);
 
@@ -155,8 +173,34 @@ export default function ConnectionsPage() {
     }
   };
 
+  /** 真正落库：`jumps` 是用户确认过的配对（key → 现有连接 id） */
+  const runImport = async (path: string, jumps: Record<string, string>) => {
+    const summary = await call<{ imported: number; skipped: number }>("config_import", {
+      path,
+      jumps: Object.keys(jumps).length > 0 ? jumps : null,
+    });
+
+    await reload(query);
+    bumpConnections();
+
+    const skipped = summary.skipped > 0 ? `，跳过 ${summary.skipped} 条已存在的` : "";
+    const linked = Object.keys(jumps).length;
+    const paired = linked > 0 ? `，其中 ${linked} 条已配好跳板` : "";
+    setNotice({
+      tone: summary.imported > 0 ? "ok" : "warn",
+      title:
+        summary.imported > 0
+          ? `已导入 ${summary.imported} 条${paired}${skipped}`
+          : `没有新增连接${skipped}`,
+      detail: "导入的连接第一次使用前需要确认主机指纹；密码需要自己补填。",
+    });
+  };
+
   /**
    * 从文件导入连接。已有的（主机+端口+用户名相同）跳过，不覆盖。
+   *
+   * 文件里带跳板名字时先走预览：让用户确认「原本经谁」对应本机的哪条连接，
+   * 而不是把依赖悄悄丢掉。名字对不上就按直连导入。
    */
   const importConnections = async () => {
     setIoBusy(true);
@@ -171,24 +215,59 @@ export default function ConnectionsPage() {
       const file = Array.isArray(picked) ? picked[0] : picked;
       if (!file) return;
 
-      const summary = await call<{ imported: number; skipped: number }>("config_import", {
-        path: file,
-      });
+      const preview = await call<ImportPreview>("config_import_preview", { path: file });
+      // 会被跳过的不问：它们根本不会进库
+      const rows = preview.entries
+        .filter((entry) => entry.jumpName && !entry.duplicate)
+        .map((entry) => ({
+          key: entry.key,
+          name: entry.name,
+          jumpName: entry.jumpName ?? "",
+          choice: entry.suggested ?? "",
+        }));
 
-      await reload(query);
-      bumpConnections();
+      if (rows.length === 0) {
+        await runImport(file, {});
+        return;
+      }
 
-      const skipped = summary.skipped > 0 ? `，跳过 ${summary.skipped} 条已存在的` : "";
-      setNotice({
-        tone: summary.imported > 0 ? "ok" : "warn",
-        title: summary.imported > 0 ? `已导入 ${summary.imported} 条${skipped}` : `没有新增连接${skipped}`,
-        detail: "导入的连接第一次使用前需要确认主机指纹；密码需要自己补填。",
-      });
+      setPendingImport({ path: file, candidates: preview.connections, rows });
     } catch (err) {
       setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
     } finally {
       setIoBusy(false);
     }
+  };
+
+  const confirmImport = async () => {
+    const pending = pendingImport;
+    if (!pending) return;
+
+    const jumps: Record<string, string> = {};
+    for (const row of pending.rows) {
+      if (row.choice) jumps[row.key] = row.choice;
+    }
+
+    setIoBusy(true);
+    try {
+      await runImport(pending.path, jumps);
+      setPendingImport(null);
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
+    } finally {
+      setIoBusy(false);
+    }
+  };
+
+  const patchImportRow = (key: string, choice: string) => {
+    setPendingImport((current) =>
+      current
+        ? {
+            ...current,
+            rows: current.rows.map((row) => (row.key === key ? { ...row, choice } : row)),
+          }
+        : current,
+    );
   };
 
   const openNew = () => {
@@ -645,6 +724,63 @@ export default function ConnectionsPage() {
           </>
         )}
       </section>
+
+      {/* 导入配对：文件里只有跳板名字，让用户点一下对应本机哪条连接 */}
+      {pendingImport ? (
+        <div className="import-pair" role="dialog" aria-modal="true" aria-label="确认跳板配对">
+          <div className="import-pair__card">
+            <header className="import-pair__head">
+              <h2>这 {pendingImport.rows.length} 条原本要经跳板</h2>
+              <p>
+                配置文件只记住了跳板的名字，跨机器认不出是哪台设备。请给每条选一台现有连接；
+                不选就按直连导入，之后也能在连接详情里补。
+              </p>
+            </header>
+
+            <ul className="import-pair__list">
+              {pendingImport.rows.map((row) => (
+                <li key={row.key} className="import-pair__row">
+                  <div className="import-pair__target">
+                    <strong>{row.name}</strong>
+                    <span className="import-pair__hint">原本经「{row.jumpName}」</span>
+                  </div>
+                  <select
+                    className="input"
+                    value={row.choice}
+                    onChange={(e) => patchImportRow(row.key, e.target.value)}
+                  >
+                    <option value="">不设（按直连导入）</option>
+                    {pendingImport.candidates.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.name}（{candidate.username}@{candidate.host}:{candidate.port}）
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+
+            <footer className="import-pair__foot">
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void confirmImport()}
+                disabled={ioBusy}
+              >
+                确认导入
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setPendingImport(null)}
+                disabled={ioBusy}
+              >
+                取消
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@
 //!
 //! 只做「读文件 / 写文件 / 汇报数字」，格式与校验都在 `config_io` 模块里（那边有完整测试）。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -73,35 +74,153 @@ pub async fn config_export(
     })
 }
 
-/// 从 JSON 导入连接。已存在的不覆盖，只新增。
-#[tauri::command]
-pub async fn config_import(state: State<'_, AppState>, path: String) -> AppResult<ImportSummary> {
-    let target = readable_target(&path)?;
+/// 导入预览：文件里每条连接 + 库里现有连接（给「经由」下拉用）。
+///
+/// 存在的意义只有一个：导出文件里记的是跳板的**名字**，不是 id，
+/// 跨机器无法自动还原。这里把线索摊给用户，让他点一下配哪台 —— 而不是悄悄丢掉依赖。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreviewEntry {
+    /// 与判重同一套口径的稳定 key，导入时按它回传配对结果
+    pub key: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: String,
+    /// 文件里记录的跳板名字；`None` = 这条原本就是直连
+    pub jump_name: Option<String>,
+    /// 库里已有同一台（主机+端口+用户名），导入时会被跳过
+    pub duplicate: bool,
+    /// 同名且**唯一**的现有连接 id，供前端预选；有歧义时给 `None`
+    pub suggested: Option<String>,
+}
 
-    let size = std::fs::metadata(&target)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCandidate {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub entries: Vec<ImportPreviewEntry>,
+    pub connections: Vec<ImportCandidate>,
+}
+
+#[tauri::command]
+pub async fn config_import_preview(
+    state: State<'_, AppState>,
+    path: String,
+) -> AppResult<ImportPreview> {
+    let target = readable_target(&path)?;
+    let entries = read_entries(&target)?;
+
+    let (preview, records) = state
+        .db
+        .call(move |conn| {
+            let records = connections::list(conn, None)?;
+            let existing = config_io::existing_identities(conn)?;
+            let candidates: Vec<(String, String)> = records
+                .iter()
+                .map(|rec| (rec.id.clone(), rec.name.clone()))
+                .collect();
+            let preview = config_io::preview(&entries, &existing, &candidates);
+            Ok((preview, records))
+        })
+        .await?;
+
+    Ok(ImportPreview {
+        entries: preview
+            .into_iter()
+            .map(|item| ImportPreviewEntry {
+                key: item.key,
+                name: item.name,
+                host: item.host,
+                port: item.port,
+                username: item.username,
+                auth_type: item.auth_type,
+                jump_name: item.jump_name,
+                duplicate: item.duplicate,
+                suggested: item.suggested,
+            })
+            .collect(),
+        connections: records
+            .into_iter()
+            .map(|rec| ImportCandidate {
+                id: rec.id,
+                name: rec.name,
+                host: rec.host,
+                port: rec.port,
+                username: rec.username,
+            })
+            .collect(),
+    })
+}
+
+/// 从 JSON 导入连接。已存在的不覆盖，只新增。
+///
+/// `jumps` 是用户在预览里确认过的跳板配对（`key → 现有连接 id`）：
+/// 没给的 key 就按直连导入，不会自己去猜。
+#[tauri::command]
+pub async fn config_import(
+    state: State<'_, AppState>,
+    path: String,
+    jumps: Option<HashMap<String, String>>,
+) -> AppResult<ImportSummary> {
+    let target = readable_target(&path)?;
+    let entries = read_entries(&target)?;
+    let jumps = jumps.unwrap_or_default();
+    let jump_count = jumps.len();
+
+    let (imported, skipped) = state
+        .db
+        .call(move |conn| {
+            let existing = config_io::existing_identities(conn)?;
+
+            // 指定的跳板必须是真存在的连接：前端可能拿的是过期列表
+            if !jumps.is_empty() {
+                let ids: Vec<String> = connections::list(conn, None)?
+                    .into_iter()
+                    .map(|rec| rec.id)
+                    .collect();
+                for (key, jump_id) in &jumps {
+                    if !ids.iter().any(|id| id == jump_id) {
+                        return Err(AppError::validation(format!(
+                            "导入时指定的跳板不存在（{key} → {jump_id}），请重新选一次"
+                        )));
+                    }
+                }
+            }
+
+            let plan = config_io::plan(entries, &existing, &jumps);
+            let imported = config_io::apply(conn, &plan)?;
+            Ok((imported, plan.skipped))
+        })
+        .await?;
+
+    tracing::info!(imported, skipped, jumps = jump_count, "已导入连接配置");
+
+    Ok(ImportSummary { imported, skipped })
+}
+
+/// 读取并解析导入文件（大小闸 + 解析校验都在这里，两个入口共用）。
+fn read_entries(target: &Path) -> AppResult<Vec<config_io::ImportEntry>> {
+    let size = std::fs::metadata(target)
         .map_err(|err| AppError::validation(format!("读不到文件: {err}")))?
         .len();
     if size > MAX_IMPORT_BYTES {
         return Err(AppError::validation("文件太大，不像是连接配置文件"));
     }
 
-    let text = std::fs::read_to_string(&target)
+    let text = std::fs::read_to_string(target)
         .map_err(|err| AppError::validation(format!("读不到文件: {err}")))?;
-    let entries = config_io::parse(&text)?;
-
-    let (imported, skipped) = state
-        .db
-        .call(move |conn| {
-            let existing = config_io::existing_identities(conn)?;
-            let plan = config_io::plan(entries, &existing);
-            let imported = config_io::apply(conn, &plan)?;
-            Ok((imported, plan.skipped))
-        })
-        .await?;
-
-    tracing::info!(imported, skipped, "已导入连接配置");
-
-    Ok(ImportSummary { imported, skipped })
+    config_io::parse(&text)
 }
 
 /// 导出目标：绝对路径 + 父目录存在。

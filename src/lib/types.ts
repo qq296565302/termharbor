@@ -71,6 +71,36 @@ export interface ConnectionInput {
   jumpConnectionId?: string | null;
 }
 
+/** 对应 `commands/config_io.rs::ImportPreview`：导入前给用户确认跳板配对 */
+export interface ImportPreviewEntry {
+  /** 与判重同一套口径的稳定 key，导入时按它回传配对结果 */
+  key: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: AuthType;
+  /** 文件里记录的跳板名字；`null` = 这条原本就是直连 */
+  jumpName: string | null;
+  /** 库里已有同一台，导入时会被跳过 */
+  duplicate: boolean;
+  /** 同名且唯一的现有连接 id（有歧义时为 null，交给用户选） */
+  suggested: string | null;
+}
+
+export interface ImportCandidate {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+}
+
+export interface ImportPreview {
+  entries: ImportPreviewEntry[];
+  connections: ImportCandidate[];
+}
+
 /** 对应 `commands/connections.rs::TestOutcome`（serde 内部标签枚举） */
 export type TestOutcome =
   | {

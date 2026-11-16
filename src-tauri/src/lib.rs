@@ -226,6 +226,7 @@ pub fn run() {
             commands::pack::pack_download,
             commands::config_io::config_export,
             commands::config_io::config_import,
+            commands::config_io::config_import_preview,
             commands::update::update_check,
             commands::update::update_open_page,
             commands::settings::settings_get,

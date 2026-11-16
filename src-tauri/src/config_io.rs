@@ -19,7 +19,7 @@
 //! `Entry` 里根本没有 password 字段，所以不存在"哪天顺手加进去"。
 //! 有一条测试断言导出的 JSON 里不含 `password` / `passphrase` / `secret` 这些词。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -84,6 +84,8 @@ pub struct ImportEntry {
     pub port: u16,
     pub username: String,
     pub auth: AuthType,
+    /// 文件里记录的跳板机名字，仅用于导入时让用户确认配对
+    pub jump_name: Option<String>,
     pub key_path: Option<String>,
     pub legacy_algorithms: bool,
 }
@@ -235,15 +237,100 @@ fn validate_entry(position: usize, entry: Entry) -> AppResult<ImportEntry> {
         }
     }
 
+    // 跳板名字只做长度限制：它只是给人看的线索，配不配得上由用户在导入时确认
+    let jump_name = entry
+        .jump_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(name) = &jump_name {
+        if name.chars().count() > NAME_MAX {
+            return Err(AppError::validation(format!(
+                "第 {position} 条：跳板名字超过 {NAME_MAX} 个字符"
+            )));
+        }
+    }
+
     Ok(ImportEntry {
         name: name.to_string(),
         host: host.to_string(),
         port: entry.port,
         username: username.to_string(),
         auth,
+        jump_name,
         key_path,
         legacy_algorithms: entry.legacy_algorithms,
     })
+}
+
+impl ImportEntry {
+    /// 导入时的稳定标识，与判重同一套口径（主机小写 + 端口 + 用户名）。
+    ///
+    /// 预览和真正导入都用它当 key：**不能用下标对齐**，
+    /// 用户可能在两次调用之间换了文件，下标会错位到别的连接上。
+    pub fn key(&self) -> String {
+        let (host, port, user) = identity(&self.host, self.port, &self.username);
+        format!("{host}|{port}|{user}")
+    }
+}
+
+/// 一条导入项的预览：给用户在导入前确认「这条原本经谁」。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreviewEntry {
+    pub key: String,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_type: String,
+    /// 文件里记录的跳板机名字
+    pub jump_name: Option<String>,
+    /// 库里已有同一台，导入时会被跳过
+    pub duplicate: bool,
+    /// 同名且唯一的候选连接 id；0 个或多个同名都返回 `None`（让用户自己选）
+    pub suggested: Option<String>,
+}
+
+/// 生成导入预览。`candidates` 是库里现有的连接 `(id, 名字)`。
+///
+/// 这里刻意**只给建议、不自动落地**：同名不代表同一台机器，
+/// 自动配对错了会静默连到别处，比让用户点一下糟得多。
+pub fn preview(
+    entries: &[ImportEntry],
+    existing: &[(String, u16, String)],
+    candidates: &[(String, String)],
+) -> Vec<PreviewEntry> {
+    let mut seen: HashSet<(String, u16, String)> = existing
+        .iter()
+        .map(|(host, port, user)| identity(host, *port, user))
+        .collect();
+
+    entries
+        .iter()
+        .map(|entry| {
+            let duplicate = !seen.insert(identity(&entry.host, entry.port, &entry.username));
+            let suggested = entry.jump_name.as_ref().and_then(|wanted| {
+                let hits: Vec<&String> = candidates
+                    .iter()
+                    .filter(|(_, name)| name == wanted)
+                    .map(|(id, _)| id)
+                    .collect();
+                // 同名多条时不猜：让用户自己选
+                (hits.len() == 1).then(|| hits[0].clone())
+            });
+
+            PreviewEntry {
+                key: entry.key(),
+                name: entry.name.clone(),
+                host: entry.host.clone(),
+                port: entry.port,
+                username: entry.username.clone(),
+                auth_type: entry.auth.as_str().to_string(),
+                jump_name: entry.jump_name.clone(),
+                duplicate,
+                suggested,
+            }
+        })
+        .collect()
 }
 
 /// 生成导入计划：跳过库里已有的、以及本文件内重复的。
@@ -254,7 +341,11 @@ fn validate_entry(position: usize, entry: Entry) -> AppResult<ImportEntry> {
 ///
 /// 不做覆盖：导入永远只新增。同名不同主机是合法情况，
 /// 而"悄悄改掉你已有的连接"比"多出一条让你自己删"糟得多。
-pub fn plan(entries: Vec<ImportEntry>, existing: &[(String, u16, String)]) -> Plan {
+pub fn plan(
+    entries: Vec<ImportEntry>,
+    existing: &[(String, u16, String)],
+    jumps: &HashMap<String, String>,
+) -> Plan {
     let mut seen: HashSet<(String, u16, String)> = existing
         .iter()
         .map(|(host, port, user)| identity(host, *port, user))
@@ -268,6 +359,9 @@ pub fn plan(entries: Vec<ImportEntry>, existing: &[(String, u16, String)]) -> Pl
             continue;
         }
 
+        // 用户在导入前确认过的跳板配对（key → 现有连接 id）
+        let jump = jumps.get(&entry.key()).cloned();
+
         let mut record = ConnectionRecord::new(
             entry.name,
             entry.host,
@@ -275,6 +369,7 @@ pub fn plan(entries: Vec<ImportEntry>, existing: &[(String, u16, String)]) -> Pl
             entry.username,
             entry.auth,
         );
+        record.jump_connection_id = jump;
         // 密码与口令一律留空：文件里没有，用户第一次连接时自己填
         record.key_path = entry.key_path;
         record.legacy_algorithms = entry.legacy_algorithms;
@@ -484,6 +579,7 @@ mod tests {
                 port: 22,
                 username: "root".into(),
                 auth: AuthType::Password,
+                jump_name: None,
                 key_path: None,
                 legacy_algorithms: false,
             },
@@ -494,6 +590,7 @@ mod tests {
                 port: 2222,
                 username: "git".into(),
                 auth: AuthType::Key,
+                jump_name: None,
                 key_path: Some("/k".into()),
                 legacy_algorithms: false,
             },
@@ -504,13 +601,14 @@ mod tests {
                 port: 22,
                 username: "root".into(),
                 auth: AuthType::Password,
+                jump_name: None,
                 key_path: None,
                 legacy_algorithms: false,
             },
         ];
 
         let existing = vec![("github.com".to_string(), 2222u16, "git".to_string())];
-        let plan = plan(entries, &existing);
+        let plan = plan(entries, &existing, &HashMap::new());
 
         assert_eq!(plan.to_insert.len(), 1);
         assert_eq!(plan.skipped, 2);
@@ -529,17 +627,104 @@ mod tests {
             port: 22,
             username: "root".into(),
             auth: AuthType::Password,
+            jump_name: None,
             key_path: None,
             legacy_algorithms: false,
         };
 
-        let first = plan(vec![make()], &[]);
-        let second = plan(vec![make()], &[]);
+        let first = plan(vec![make()], &[], &HashMap::new());
+        let second = plan(vec![make()], &[], &HashMap::new());
 
         assert_ne!(
             first.to_insert[0].id, second.to_insert[0].id,
             "每次导入都要新 id，否则会撞掉已有记录"
         );
+    }
+
+    #[test]
+    fn parse_reads_jump_name_and_drops_blank_one() {
+        let text = document_json(
+            r#"{"name":"a","host":"10.0.0.1","port":22,"username":"root","authType":"password","jumpName":" 堡垒机 "}
+               ,{"name":"b","host":"10.0.0.2","port":22,"username":"root","authType":"password","jumpName":"   "}"#,
+        );
+        let entries = parse(&text).unwrap();
+        assert_eq!(
+            entries[0].jump_name.as_deref(),
+            Some("堡垒机"),
+            "两侧空白要去掉"
+        );
+        assert!(entries[1].jump_name.is_none(), "纯空白等于没写");
+    }
+
+    #[test]
+    fn preview_marks_duplicates_and_only_suggests_unambiguous_names() {
+        let entries = vec![
+            ImportEntry {
+                name: "内网库".into(),
+                host: "10.0.0.1".into(),
+                port: 22,
+                username: "root".into(),
+                auth: AuthType::Password,
+                jump_name: Some("堡垒机".into()),
+                key_path: None,
+                legacy_algorithms: false,
+            },
+            ImportEntry {
+                name: "另一台".into(),
+                host: "10.0.0.2".into(),
+                port: 22,
+                username: "root".into(),
+                auth: AuthType::Password,
+                jump_name: Some("重名堡垒机".into()),
+                key_path: None,
+                legacy_algorithms: false,
+            },
+        ];
+        let existing = vec![("10.0.0.1".to_string(), 22u16, "root".to_string())];
+        let candidates = vec![
+            ("id-1".to_string(), "堡垒机".to_string()),
+            ("id-2".to_string(), "重名堡垒机".to_string()),
+            ("id-3".to_string(), "重名堡垒机".to_string()),
+        ];
+
+        let preview = preview(&entries, &existing, &candidates);
+
+        assert!(preview[0].duplicate, "库里已有同一台要标出来");
+        assert_eq!(preview[0].suggested.as_deref(), Some("id-1"));
+        assert!(!preview[1].duplicate);
+        assert!(
+            preview[1].suggested.is_none(),
+            "同名多条时不能猜，让用户自己选"
+        );
+    }
+
+    #[test]
+    fn plan_attaches_only_user_confirmed_jumps() {
+        let make = |jump_name: Option<&str>| ImportEntry {
+            name: "内网库".into(),
+            host: "10.0.0.1".into(),
+            port: 22,
+            username: "root".into(),
+            auth: AuthType::Password,
+            jump_name: jump_name.map(str::to_string),
+            key_path: None,
+            legacy_algorithms: false,
+        };
+
+        let entry = make(Some("堡垒机"));
+        let key = entry.key();
+        let mut jumps = HashMap::new();
+        jumps.insert(key, "id-1".to_string());
+
+        let planned = plan(vec![entry], &[], &jumps);
+        assert_eq!(
+            planned.to_insert[0].jump_connection_id.as_deref(),
+            Some("id-1")
+        );
+
+        // 用户没确认（映射里没有）就按直连，绝不按名字自己猜
+        let planned = plan(vec![make(Some("堡垒机"))], &[], &HashMap::new());
+        assert!(planned.to_insert[0].jump_connection_id.is_none());
     }
 
     #[tokio::test]
@@ -552,7 +737,7 @@ mod tests {
         let imported = db
             .call(move |conn| {
                 let existing = existing_identities(conn)?;
-                let plan = plan(entries, &existing);
+                let plan = plan(entries, &existing, &HashMap::new());
                 apply(conn, &plan)
             })
             .await
@@ -589,7 +774,7 @@ mod tests {
             let imported = db
                 .call(move |conn| {
                     let existing = existing_identities(conn)?;
-                    let plan = plan(entries, &existing);
+                    let plan = plan(entries, &existing, &HashMap::new());
                     apply(conn, &plan)
                 })
                 .await

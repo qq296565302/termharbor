@@ -885,6 +885,90 @@ a:focus-visible,
   height: 100%;
   padding: 0;
   margin: 0;
+  /* 导入配对浮层挂在这一层上，铺满整页 */
+  position: relative;
+}
+
+/* ---- 导入配对浮层：只在文件里带跳板名字时出现 ---- */
+.import-pair {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #0f1b2a 22%, transparent);
+}
+
+.import-pair__card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(580px, calc(100% - 48px));
+  max-height: calc(100% - 64px);
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.import-pair__head h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.import-pair__head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.import-pair__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.import-pair__row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.import-pair__target {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.import-pair__target strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-pair__hint {
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.import-pair__foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 @media (max-width: 860px) {

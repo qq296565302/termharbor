@@ -189,7 +189,45 @@ const connections: ConnectionDto[] = [
   },
 ];
 
+/** 导入预览夹具：两条带跳板名字的，一条能按名字唯一匹配、一条匹配不上 */
+const importPreview = {
+  entries: [
+    {
+      key: "10.0.3.21|22|ops",
+      name: "内网 MySQL",
+      host: "10.0.3.21",
+      port: 22,
+      username: "ops",
+      authType: "key",
+      jumpName: "堡垒机",
+      duplicate: false,
+      suggested: "c1",
+    },
+    {
+      key: "10.0.3.30|22|ops",
+      name: "内网 API",
+      host: "10.0.3.30",
+      port: 22,
+      username: "ops",
+      authType: "password",
+      jumpName: "公司堡垒机",
+      duplicate: false,
+      suggested: null,
+    },
+  ],
+  connections: connections.map((rec) => ({
+    id: rec.id,
+    name: rec.name,
+    host: rec.host,
+    port: rec.port,
+    username: rec.username,
+  })),
+};
+
 Object.assign(responses, {
+  "plugin:dialog|open": "C:/Users/me/Desktop/termharbor-connections.json",
+  config_import_preview: importPreview,
+  config_import: { imported: 2, skipped: 0 },
   connection_list: connections,
   connection_get: connections[1],
   connection_create: connections[1],
