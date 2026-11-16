@@ -3594,6 +3594,14 @@ a:focus-visible,
   min-height: 0;
 }
 
+/* `hidden` 属性必须显式接住：浏览器默认的 `[hidden]{display:none}` 是 **UA 样式**，
+   任何作者写的 `display` 都能盖过它。原来这里只写了 `display:flex`，
+   结果「同一连接开两个标签」时两个文件面板并排显示（用户真实撞到）。
+   以后凡是靠 `hidden` 收起的元素，都得配一条同名的 `[hidden]` 规则。 */
+.term-files__slot[hidden] {
+  display: none;
+}
+
 /* 面板里的「正在连接 / 重连」占位 */
 .file-panel__status {
   display: flex;
