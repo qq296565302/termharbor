@@ -568,29 +568,47 @@ pub(crate) async fn prepare_probe(
     })
 }
 
-/// 把「经由 xxx」展开成一串嵌套的探测请求（多跳）。
+/// 把「经由 xxx」展开成嵌套的探测请求（多跳）。
 ///
-/// `jump_chain` 给的是"最近的一跳在前"（目标→B→A 得到 `[B, A]`），
-/// 所以要**从最远端开始往里套**：A 先建好，再在它上面建 B，最后才是目标。
+/// 顺序很重要：`jump_hops` 返回**由近到远**（目标→B→A 得到 `[B, A]`），
+/// 而建连必须由远及近（先 A，再在 A 的通道里建 B），所以要从尾部往前套。
 async fn jump_probe(state: &AppState, jump_id: &str) -> AppResult<ProbeRequest> {
-    let chain = state
+    let hops = state
         .db
         .call({
             let id = jump_id.to_string();
-            move |conn| connections::jump_chain(conn, &id, MAX_JUMP_HOPS)
+            move |conn| jump_hops(conn, &id)
         })
         .await?;
 
     let mut nested: Option<Box<ProbeRequest>> = None;
-    for rec in chain.iter().rev() {
+    for rec in hops.iter().rev() {
         let mut probe = probe_for_record(state, rec).await?;
         probe.jump = nested.take();
         nested = Some(Box::new(probe));
     }
 
-    nested
-        .map(|boxed| *boxed)
-        .ok_or_else(|| AppError::validation("「经由」指向的连接链是空的，请重新选择跳板"))
+    // `jump_hops` 至少含用户选的那一条，走到这里一定有值；
+    // 真为空的唯一解释是并发删了跳板，给个能照着做的提示
+    nested.map(|boxed| *boxed).ok_or_else(|| {
+        AppError::validation("找不到「经由」指定的连接，它可能刚被删掉，请重新选择跳板")
+    })
+}
+
+/// 「经由」展开后的完整跳板序列：**第一项就是用户选的那条**。
+///
+/// `connections::jump_chain` 只返回它的**上级**（不含自己），这里补上头部 ——
+/// 0.3.2 最初漏了这一步，"跳板没有上级"时会得到空链，连接直接报「链是空的」。
+pub(crate) fn jump_hops(
+    conn: &rusqlite::Connection,
+    jump_id: &str,
+) -> AppResult<Vec<ConnectionRecord>> {
+    let head = connections::get(conn, jump_id)
+        .map_err(|_| AppError::validation("「经由」指定的连接不存在，可能已被删除，请重新选择"))?;
+
+    let mut hops = vec![head];
+    hops.extend(connections::jump_chain(conn, jump_id, MAX_JUMP_HOPS)?);
+    Ok(hops)
 }
 
 /// 由一条已保存的连接构造探测请求（解密凭据 + 取指纹记录）。
@@ -741,6 +759,76 @@ mod tests {
 
         input.key_path = Some("C:/keys/id_ed25519".into());
         assert_eq!(validate(&input).unwrap(), AuthType::Key);
+    }
+
+    /// 回归：0.3.2 最初的 `jump_probe` 直接用 `jump_chain` 的返回值当整条链，
+    /// 而那个函数**不含跳板自己** —— 所以「跳板没有上级」时得到空链，
+    /// 连接直接报「「经由」指向的连接链是空的」。真实用户第一条就撞上了。
+    #[tokio::test]
+    async fn jump_hops_includes_the_selected_connection_itself() {
+        let db = crate::storage::Db::open_in_memory().unwrap();
+        let jump = ConnectionRecord::new("阿里云", "47.94.196.217", 22, "root", AuthType::Password);
+
+        db.call({
+            let jump = jump.clone();
+            move |conn| connections::insert(conn, &jump)
+        })
+        .await
+        .unwrap();
+
+        let hops = db
+            .call({
+                let id = jump.id.clone();
+                move |conn| jump_hops(conn, &id)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            hops.len(),
+            1,
+            "只有一层跳板时，链里也必须有一条（就是它自己）"
+        );
+        assert_eq!(hops[0].name, "阿里云");
+    }
+
+    #[tokio::test]
+    async fn jump_hops_lists_nearest_first() {
+        let db = crate::storage::Db::open_in_memory().unwrap();
+        let a = ConnectionRecord::new("A", "10.0.0.1", 22, "root", AuthType::Password);
+        let mut b = ConnectionRecord::new("B", "10.0.0.2", 22, "root", AuthType::Password);
+        b.jump_connection_id = Some(a.id.clone());
+
+        db.call({
+            let (a, b) = (a.clone(), b.clone());
+            move |conn| {
+                connections::insert(conn, &a)?;
+                connections::insert(conn, &b)
+            }
+        })
+        .await
+        .unwrap();
+
+        let hops = db
+            .call({
+                let id = b.id.clone();
+                move |conn| jump_hops(conn, &id)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            hops.iter().map(|rec| rec.name.as_str()).collect::<Vec<_>>(),
+            vec!["B", "A"],
+            "由近到远：用户选的那条排最前"
+        );
+    }
+
+    #[tokio::test]
+    async fn jump_hops_rejects_missing_connection() {
+        let db = crate::storage::Db::open_in_memory().unwrap();
+        let err = db.call(|conn| jump_hops(conn, "gone")).await.unwrap_err();
+        assert_eq!(err.code, crate::error::ErrCode::ValidationError);
     }
 
     #[test]
