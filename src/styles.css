@@ -1478,6 +1478,14 @@ a:focus-visible,
   min-width: 0;
 }
 
+/* 有背景图时（组件挂 .term-main--bg）xterm 必须整层透明。
+   xterm 自带的样式表把 `.xterm .xterm-viewport` 的底色写死成 #000，
+   而 allowTransparency 只管画布那层 —— viewport 不跟着 theme.background 走，
+   不摘掉它，背景图就被这一整块黑盖在下面，只从终端外面 8px 的边缘露出来。 */
+.term-main--bg .xterm .xterm-viewport {
+  background-color: transparent;
+}
+
 .term-host {
   position: absolute;
   inset: 0;

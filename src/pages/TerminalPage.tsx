@@ -1018,7 +1018,7 @@ export default function TerminalPage() {
       ) : null}
 
       <div className="term-body" style={{ background: TERM_THEMES[themeName].background }}>
-        <div className="term-main" style={terminalBackdrop}>
+        <div className={`term-main${bgUrl ? " term-main--bg" : ""}`} style={terminalBackdrop}>
           {tabs.map((tab) => (
             <TerminalView
               key={tab.tabId}
