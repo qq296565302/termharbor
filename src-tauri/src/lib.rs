@@ -24,7 +24,7 @@ pub mod update;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::crypto::{default_provider, FieldCipher};
 use crate::sftp::{SftpManager, Transfers};
@@ -140,6 +140,23 @@ pub fn run() {
                 }
             };
 
+            let tunnels = Arc::new(TunnelManager::new());
+            {
+                // 重连发生是在后台任务里、不经过任何 command，只能靠这条回调
+                // 把状态送到界面。没有它，界面会一直停在最后一次点按钮的结果上。
+                let handle = app.handle().clone();
+                tunnels.set_notice(Arc::new(move |tunnel_id, state, message| {
+                    let _ = handle.emit(
+                        crate::events::EVT_TUNNEL_STATE,
+                        serde_json::json!({
+                            "tunnelId": tunnel_id,
+                            "state": state,
+                            "message": message,
+                        }),
+                    );
+                }));
+            }
+
             app.manage(AppState {
                 db,
                 cipher,
@@ -150,7 +167,7 @@ pub fn run() {
                 sessions: Arc::new(SessionManager::new()),
                 sftp: Arc::new(SftpManager::new()),
                 transfers: Arc::new(Transfers::new()),
-                tunnels: Arc::new(TunnelManager::new()),
+                tunnels: Arc::clone(&tunnels),
                 started_at_ms: crate::state::now_millis(),
                 _logging: logging,
             });
@@ -166,6 +183,19 @@ pub fn run() {
                     tokio::time::sleep(interval).await;
                     if let Some(state) = handle.try_state::<AppState>() {
                         lease::publish(&state);
+                    }
+                }
+            });
+
+            // 自动启动的转发规则：等窗口和网络栈就绪再拉。开机自启时网络常常还没起来，
+            // 立刻拉会整批失败；失败只记在规则状态里，不影响终端和别的规则。
+            let auto_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if let Some(state) = auto_handle.try_state::<AppState>() {
+                    let started = crate::commands::tunnel::apply_auto_start(state.inner()).await;
+                    if started > 0 {
+                        tracing::info!(count = started, "自动启动的转发已拉起");
                     }
                 }
             });

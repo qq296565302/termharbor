@@ -5,13 +5,17 @@
 //! 目标地址由**远端**解析，所以能把内网服务搬到本机；本地只监听 `127.0.0.1`，
 //! 同网段的其他人连不进来（要放开是另一件事，需要单独的开关）。
 //!
-//! 两条设计取舍：
+//! 三条设计取舍：
 //! 1. **隧道自己建一条专用 SSH 连接**，不借用终端标签的会话 —— 否则关掉标签页
 //!    会把隧道一起弄死，而用户完全不会把这两件事联系起来。
 //! 2. 同一台机器的多条规则共用一个 `links` 条目，不开一堆连接。
+//! 3. **断线要说出来**：专用连接死了之后监听还在，状态却必须切到 `reconnecting`，
+//!    否则界面一片绿、用户去查密码和防火墙。重连由独立任务按退避做，
+//!    监听循环不被拖住。
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use russh::client;
 use tokio::net::TcpListener;
@@ -19,6 +23,12 @@ use tokio_util::sync::CancellationToken;
 
 use super::client::{establish, ProbeHandler, ProbeRequest, ProbeResult, Purpose};
 use crate::error::{AppError, AppResult, ErrCode};
+
+/// 多久看一眼专用连接还活着没有（纯本地判断，不产生网络流量）。
+const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// 重连退避的起点与上限。
+const RECONNECT_MIN: Duration = Duration::from_secs(1);
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
 /// 开一条转发要做的事。
 pub struct StartRequest {
@@ -35,8 +45,17 @@ pub struct StartRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TunnelState {
     Stopped,
-    Listening { port: u16 },
-    Failed { message: String },
+    /// 监听在，链路也通
+    Listening {
+        port: u16,
+    },
+    /// 监听还在，但专用连接断了，后台正在重连
+    Reconnecting {
+        message: String,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 impl TunnelState {
@@ -44,6 +63,7 @@ impl TunnelState {
         match self {
             TunnelState::Stopped => "stopped",
             TunnelState::Listening { .. } => "listening",
+            TunnelState::Reconnecting { .. } => "reconnecting",
             TunnelState::Failed { .. } => "failed",
         }
     }
@@ -55,14 +75,60 @@ struct Running {
     task: tokio::task::JoinHandle<()>,
 }
 
+/// 状态变化通知：`(tunnel_id, state, message)`。
+///
+/// ssh 层不认识 Tauri，事件由上层注入回调（和终端输出的 `EmitFn` 一个路子）。
+pub type TunnelNotice = Arc<dyn Fn(&str, &str, Option<&str>) + Send + Sync>;
+
 #[derive(Default)]
-pub struct TunnelManager {
+struct Inner {
     /// connection_id → 专用连接
     links: Mutex<HashMap<String, Arc<client::Handle<ProbeHandler>>>>,
     /// 规则 id → 运行中
     running: Mutex<HashMap<String, Running>>,
     /// 最近一次失败原因，给界面显示（进程重启即清空）
     failures: Mutex<HashMap<String, String>>,
+    /// 正在重连的规则 → 最近一次失败原因。有 key = 链路不正常。
+    reconnecting: Mutex<HashMap<String, String>>,
+    notice: Mutex<Option<TunnelNotice>>,
+}
+
+impl Inner {
+    fn lock_links(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, Arc<client::Handle<ProbeHandler>>>> {
+        self.links.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_running(&self) -> std::sync::MutexGuard<'_, HashMap<String, Running>> {
+        self.running.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_failures(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.failures.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn lock_reconnecting(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.reconnecting.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 发通知。先把回调 clone 出来再调用 —— 回调里若回头读状态不会死锁。
+    fn notify(&self, tunnel_id: &str, state: &str, message: Option<&str>) {
+        let notice = self
+            .notice
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(notice) = notice {
+            notice(tunnel_id, state, message);
+        }
+    }
+}
+
+/// 可克隆：监听与重连任务各拿一份句柄去改状态。
+#[derive(Clone, Default)]
+pub struct TunnelManager {
+    inner: Arc<Inner>,
 }
 
 impl TunnelManager {
@@ -70,11 +136,22 @@ impl TunnelManager {
         Self::default()
     }
 
+    /// 注入状态变化通知（上层用它发事件）。重复调用以最后一次为准。
+    pub fn set_notice(&self, notice: TunnelNotice) {
+        *self.inner.notice.lock().unwrap_or_else(|p| p.into_inner()) = Some(notice);
+    }
+
     pub fn state(&self, tunnel_id: &str) -> TunnelState {
-        if let Some(running) = self.lock_running().get(tunnel_id) {
+        // 先看重连标记：监听还在、链路却断了，这时候说"运行中"是骗人
+        if let Some(message) = self.inner.lock_reconnecting().get(tunnel_id) {
+            return TunnelState::Reconnecting {
+                message: message.clone(),
+            };
+        }
+        if let Some(running) = self.inner.lock_running().get(tunnel_id) {
             return TunnelState::Listening { port: running.port };
         }
-        match self.lock_failures().get(tunnel_id) {
+        match self.inner.lock_failures().get(tunnel_id) {
             Some(message) => TunnelState::Failed {
                 message: message.clone(),
             },
@@ -87,6 +164,10 @@ impl TunnelManager {
         if let Some(port) = self.running_port(&req.tunnel_id) {
             return Ok(port);
         }
+
+        // 先看这个本机端口是不是被**自己的另一条规则**占着。落到 bind 上会报
+        // "被别的程序占用"，用户就会去任务管理器里找一个不存在的程序。
+        self.ensure_port_free(&req)?;
 
         let mut handle = self.link(&req).await?;
 
@@ -102,87 +183,169 @@ impl TunnelManager {
         let listener = TcpListener::bind(("127.0.0.1", req.local_port))
             .await
             .map_err(|err| bind_error(req.local_port, &err))?;
+        // local_port 填 0 时由系统挑，真实端口得从这里取
+        let bound_port = listener
+            .local_addr()
+            .map(|addr| addr.port())
+            .unwrap_or(req.local_port);
 
         let token = CancellationToken::new();
         let loop_token = token.clone();
+        let inner = Arc::clone(&self.inner);
+        let tunnel_id = req.tunnel_id.clone();
+        let connection_id = req.connection_id.clone();
+        let probe = req.probe;
         let target_host = req.target_host.clone();
         let target_port = req.target_port;
 
         let task = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(HEALTH_TICK);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // interval 第一次 tick 立刻返回，先吃掉：刚起来就判死不合理
+            ticker.tick().await;
+
             loop {
-                let accepted = tokio::select! {
+                tokio::select! {
                     _ = loop_token.cancelled() => break,
-                    accepted = listener.accept() => accepted,
-                };
-
-                let (socket, peer) = match accepted {
-                    Ok(pair) => pair,
-                    Err(err) => {
-                        tracing::warn!(error = %err, "转发监听接受连接失败，继续等下一个");
-                        continue;
-                    }
-                };
-
-                let handle = Arc::clone(&handle);
-                let host = target_host.clone();
-                let child = loop_token.clone();
-                tokio::spawn(async move {
-                    let channel = match handle
-                        .channel_open_direct_tcpip(
-                            host.clone(),
-                            u32::from(target_port),
-                            peer.ip().to_string(),
-                            u32::from(peer.port()),
-                        )
-                        .await
-                    {
-                        Ok(channel) => channel,
-                        Err(err) => {
-                            tracing::warn!(
-                                target = %format!("{host}:{target_port}"),
-                                error = %err,
-                                "转发通道开不出来（目标不可达或连接已断）"
-                            );
-                            return;
+                    _ = ticker.tick() => {
+                        if link_is_alive(&inner, &connection_id) {
+                            continue;
                         }
-                    };
-
-                    let mut stream = channel.into_stream();
-                    let mut socket = socket;
-                    tokio::select! {
-                        _ = child.cancelled() => {}
-                        _ = tokio::io::copy_bidirectional(&mut stream, &mut socket) => {}
+                        // 已经在重连了就别再起一个
+                        if inner.lock_reconnecting().contains_key(&tunnel_id) {
+                            continue;
+                        }
+                        let message = "连接已断开，正在重连".to_string();
+                        inner
+                            .lock_reconnecting()
+                            .insert(tunnel_id.clone(), message.clone());
+                        inner.notify(&tunnel_id, "reconnecting", Some(&message));
+                        tracing::warn!(
+                            tunnel = %tunnel_id,
+                            "隧道专用连接已断开，开始重连"
+                        );
+                        spawn_reconnect(
+                            Arc::clone(&inner),
+                            tunnel_id.clone(),
+                            connection_id.clone(),
+                            probe.clone(),
+                            loop_token.clone(),
+                        );
                     }
-                });
+                    accepted = listener.accept() => {
+                        let (socket, peer) = match accepted {
+                            Ok(pair) => pair,
+                            Err(err) => {
+                                tracing::warn!(error = %err, "转发监听接受连接失败，继续等下一个");
+                                continue;
+                            }
+                        };
+
+                        // 每次都用**当前**的连接：重连换的是新句柄，
+                        // 不能沿用循环外面那份旧的
+                        let handle = {
+                            let links = inner.lock_links();
+                            links.get(&connection_id).map(Arc::clone)
+                        };
+                        let Some(handle) = handle else {
+                            tracing::warn!(tunnel = %tunnel_id, "收到连接但没有可用链路，丢弃");
+                            continue;
+                        };
+
+                        let host = target_host.clone();
+                        let child = loop_token.clone();
+                        tokio::spawn(async move {
+                            let channel = match handle
+                                .channel_open_direct_tcpip(
+                                    host.clone(),
+                                    u32::from(target_port),
+                                    peer.ip().to_string(),
+                                    u32::from(peer.port()),
+                                )
+                                .await
+                            {
+                                Ok(channel) => channel,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        target = %format!("{host}:{target_port}"),
+                                        error = %err,
+                                        "转发通道开不出来（目标不可达或连接已断）"
+                                    );
+                                    return;
+                                }
+                            };
+
+                            let mut stream = channel.into_stream();
+                            let mut socket = socket;
+                            tokio::select! {
+                                _ = child.cancelled() => {}
+                                _ = tokio::io::copy_bidirectional(&mut stream, &mut socket) => {}
+                            }
+                        });
+                    }
+                }
             }
         });
 
-        self.lock_running().insert(
+        self.inner.lock_running().insert(
             req.tunnel_id.clone(),
             Running {
-                port: req.local_port,
+                port: bound_port,
                 token,
                 task,
             },
         );
-        self.lock_failures().remove(&req.tunnel_id);
+        self.inner.lock_failures().remove(&req.tunnel_id);
+        self.inner.lock_reconnecting().remove(&req.tunnel_id);
 
         tracing::info!(
             tunnel = %req.tunnel_id,
-            local = req.local_port,
+            local = bound_port,
             target = %format!("{}:{}", req.target_host, req.target_port),
             "本地转发已启动"
         );
-        Ok(req.local_port)
+        self.inner.notify(&req.tunnel_id, "listening", None);
+        Ok(bound_port)
     }
 
-    /// 停一条转发（连带掐断正在搬运的连接）。
+    /// 对外播报状态。命令层在启动失败时用它，事件出口保持唯一。
+    pub fn announce(&self, tunnel_id: &str, state: &str, message: Option<&str>) {
+        self.inner.notify(tunnel_id, state, message);
+    }
+
+    /// 同一个本机端口不能被两条规则同时监听 —— 先自己查出来，别等 bind 报错。
+    fn ensure_port_free(&self, req: &StartRequest) -> AppResult<()> {
+        if req.local_port == 0 {
+            // 交给系统挑的端口，不存在"被自己的规则占着"
+            return Ok(());
+        }
+        let running = self.inner.lock_running();
+        let taken = running
+            .iter()
+            .any(|(id, item)| id != &req.tunnel_id && item.port == req.local_port);
+        drop(running);
+        if taken {
+            return Err(AppError::with_detail(
+                ErrCode::TunnelFailed,
+                format!(
+                    "本机 {} 端口已经被你的另一条转发规则占用，先把它停掉，或者换一个端口",
+                    req.local_port
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// 停一条转发（连带掐断正在搬运的连接和后台重连）。
     pub fn stop(&self, tunnel_id: &str) {
-        let running = self.lock_running().remove(tunnel_id);
+        let running = self.inner.lock_running().remove(tunnel_id);
+        // 重连标记一起清掉，否则下次 start 会被旧状态挡住
+        self.inner.lock_reconnecting().remove(tunnel_id);
         if let Some(running) = running {
             running.token.cancel();
             running.task.abort();
             tracing::info!(tunnel = %tunnel_id, "本地转发已停止");
+            self.inner.notify(tunnel_id, "stopped", None);
         }
     }
 
@@ -191,50 +354,68 @@ impl TunnelManager {
         for id in tunnel_ids {
             self.stop(id);
         }
+        let mut links = self.inner.lock_links();
         for connection_id in connection_ids {
-            self.links
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .remove(connection_id);
+            links.remove(connection_id);
         }
     }
 
     /// 进程退出前收摊。
     pub fn stop_all(&self) {
-        let running = std::mem::take(&mut *self.lock_running());
+        let running = std::mem::take(&mut *self.inner.lock_running());
         for (_, item) in running {
             item.token.cancel();
             item.task.abort();
         }
-        self.links.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.inner.lock_reconnecting().clear();
+        self.inner.lock_links().clear();
     }
 
     /// 记下失败原因（前端刷新时能看到"为什么起不来"）。
     pub fn note_failure(&self, tunnel_id: &str, message: String) {
-        self.lock_failures().insert(tunnel_id.to_string(), message);
+        self.inner
+            .lock_failures()
+            .insert(tunnel_id.to_string(), message);
     }
 
     fn running_port(&self, tunnel_id: &str) -> Option<u16> {
-        self.lock_running().get(tunnel_id).map(|item| item.port)
+        self.inner
+            .lock_running()
+            .get(tunnel_id)
+            .map(|item| item.port)
     }
 
     async fn link(&self, req: &StartRequest) -> AppResult<Arc<client::Handle<ProbeHandler>>> {
-        let existing = self.lock_links().get(&req.connection_id).map(Arc::clone);
+        let existing = {
+            let links = self.inner.lock_links();
+            links.get(&req.connection_id).map(Arc::clone)
+        };
         if let Some(handle) = existing {
-            return Ok(handle);
+            // 上次留下的死连接不能再交出去，否则探测必然失败，还得白重建一次
+            if !handle.is_closed() {
+                return Ok(handle);
+            }
+            let mut links = self.inner.lock_links();
+            if links
+                .get(&req.connection_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &handle))
+            {
+                links.remove(&req.connection_id);
+            }
         }
 
         let established = establish(&req.probe, Purpose::Session)
             .await
             .map_err(to_app_error)?;
         let handle = Arc::new(established.handle);
-        self.lock_links()
+        self.inner
+            .lock_links()
             .insert(req.connection_id.clone(), Arc::clone(&handle));
         Ok(handle)
     }
 
     fn forget_link(&self, connection_id: &str, handle: &Arc<client::Handle<ProbeHandler>>) {
-        let mut links = self.lock_links();
+        let mut links = self.inner.lock_links();
         // 只删自己那一份：并发重建时别把别人刚建好的连接也丢了
         if links
             .get(connection_id)
@@ -244,19 +425,81 @@ impl TunnelManager {
         }
     }
 
-    fn lock_running(&self) -> std::sync::MutexGuard<'_, HashMap<String, Running>> {
-        self.running.lock().unwrap_or_else(|p| p.into_inner())
+    /// 测试钩子：取某条连接当前的专用链路，用来模拟"网络断了"。
+    #[cfg(test)]
+    fn debug_link(&self, connection_id: &str) -> Option<Arc<client::Handle<ProbeHandler>>> {
+        let links = self.inner.lock_links();
+        links.get(connection_id).map(Arc::clone)
     }
+}
 
-    fn lock_failures(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
-        self.failures.lock().unwrap_or_else(|p| p.into_inner())
+/// 这条连接的专用链路还活着没有（纯本地判断，不发包）。
+fn link_is_alive(inner: &Arc<Inner>, connection_id: &str) -> bool {
+    let handle = {
+        let links = inner.lock_links();
+        links.get(connection_id).map(Arc::clone)
+    };
+    match handle {
+        Some(handle) => !handle.is_closed(),
+        None => false,
     }
+}
 
-    fn lock_links(
-        &self,
-    ) -> std::sync::MutexGuard<'_, HashMap<String, Arc<client::Handle<ProbeHandler>>>> {
-        self.links.lock().unwrap_or_else(|p| p.into_inner())
-    }
+/// 后台重连：退避重试到成功，或者整条规则被停掉。
+///
+/// 单独起任务而不是塞进监听循环，是为了让监听继续接连接 —— 重连期间用户
+/// 重试能立刻拿到"连不上"的回应，而不是积压在 listen backlog 里干等。
+fn spawn_reconnect(
+    inner: Arc<Inner>,
+    tunnel_id: String,
+    connection_id: String,
+    probe: ProbeRequest,
+    token: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let mut backoff = RECONNECT_MIN;
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => return,
+                _ = tokio::time::sleep(backoff) => {}
+            }
+
+            let attempt = tokio::select! {
+                _ = token.cancelled() => return,
+                result = establish(&probe, Purpose::Session) => result,
+            };
+
+            match attempt {
+                Ok(established) => {
+                    inner
+                        .lock_links()
+                        .insert(connection_id.clone(), Arc::new(established.handle));
+                    inner.lock_reconnecting().remove(&tunnel_id);
+                    inner.lock_failures().remove(&tunnel_id);
+                    inner.notify(&tunnel_id, "listening", None);
+                    tracing::info!(tunnel = %tunnel_id, "隧道连接已重连");
+                    return;
+                }
+                Err(result) => {
+                    let err = to_app_error(result);
+                    let message = err
+                        .detail
+                        .clone()
+                        .unwrap_or_else(|| err.message.to_string());
+                    inner
+                        .lock_reconnecting()
+                        .insert(tunnel_id.clone(), message.clone());
+                    inner.notify(&tunnel_id, "reconnecting", Some(&message));
+                    tracing::warn!(
+                        tunnel = %tunnel_id,
+                        error = %message,
+                        "隧道重连失败，稍后再试"
+                    );
+                    backoff = (backoff * 2).min(RECONNECT_MAX);
+                }
+            }
+        }
+    });
 }
 
 /// 开一条通道再立刻关掉：只用它确认"远端到目标这条路通"。
@@ -517,6 +760,111 @@ mod tests {
                 .expect("5 秒内应该拿到回显")
                 .unwrap();
         assert_eq!(&buffer[..read], b"ping-through-tunnel");
+
+        manager.stop("t-c1");
+        assert_eq!(manager.state("t-c1"), TunnelState::Stopped);
+    }
+
+    /// 两条规则抢同一个本机端口：必须说是"你的另一条规则"，不能落到
+    /// "被别的程序占用"——那会让人去任务管理器里找一个不存在的程序。
+    #[tokio::test]
+    async fn second_rule_on_same_local_port_names_the_conflict() {
+        let server = spawn("pw", HostKey::Ed25519, false);
+        let fingerprint = match crate::ssh::probe(probe_for(server.port)).await {
+            ProbeResult::NeedsConfirmation { fingerprint, .. } => fingerprint,
+            other => panic!("期望首次连接确认，实际 {other:?}"),
+        };
+
+        let mut probe = probe_for(server.port);
+        probe.trust_fingerprint = Some(fingerprint);
+
+        let pick = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = pick.local_addr().unwrap().port();
+        drop(pick);
+
+        let manager = TunnelManager::new();
+
+        let mut first = start_req("c1", probe.clone());
+        first.tunnel_id = "t1".to_string();
+        first.local_port = port;
+        first.target_port = server.port;
+        manager.start(first).await.unwrap();
+
+        let mut second = start_req("c1", probe);
+        second.tunnel_id = "t2".to_string();
+        second.local_port = port;
+        second.target_port = server.port;
+
+        let err = manager.start(second).await.unwrap_err();
+        assert_eq!(err.code, ErrCode::TunnelFailed);
+        let detail = err.detail.unwrap_or_default();
+        assert!(
+            detail.contains("另一条转发规则"),
+            "要指出是自己另一条规则：{detail}"
+        );
+        assert!(detail.contains(&port.to_string()), "要带端口号：{detail}");
+
+        manager.stop("t1");
+    }
+
+    /// 专用连接被掐断后，状态必须先亮"重连中"，再自己恢复成"运行中"。
+    ///
+    /// 守的是真踩过的坑：界面一片绿、客户端连不上，用户去查密码和防火墙。
+    #[tokio::test]
+    async fn link_drop_is_reported_then_recovered() {
+        let server = spawn("pw", HostKey::Ed25519, false);
+        let fingerprint = match crate::ssh::probe(probe_for(server.port)).await {
+            ProbeResult::NeedsConfirmation { fingerprint, .. } => fingerprint,
+            other => panic!("期望首次连接确认，实际 {other:?}"),
+        };
+
+        let mut probe = probe_for(server.port);
+        probe.trust_fingerprint = Some(fingerprint);
+
+        let pick = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let local_port = pick.local_addr().unwrap().port();
+        drop(pick);
+
+        let manager = TunnelManager::new();
+        let mut req = start_req("c1", probe);
+        req.local_port = local_port;
+        req.target_port = server.port;
+        manager.start(req).await.unwrap();
+        assert!(matches!(
+            manager.state("t-c1"),
+            TunnelState::Listening { .. }
+        ));
+
+        // 模拟网络中断 / 服务器重启：把专用连接主动断掉
+        let link = manager.debug_link("c1").expect("应当已有专用连接");
+        let _ = link
+            .disconnect(russh::Disconnect::ByApplication, "test", "")
+            .await;
+
+        let saw_reconnecting = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                if matches!(manager.state("t-c1"), TunnelState::Reconnecting { .. }) {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(saw_reconnecting, "链路断了之后不能还显示运行中");
+
+        // 服务端还在，应该自己连回来
+        let recovered = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+            loop {
+                if matches!(manager.state("t-c1"), TunnelState::Listening { .. }) {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .unwrap_or(false);
+        assert!(recovered, "服务端还在监听，应该能自动重连回来");
 
         manager.stop("t-c1");
         assert_eq!(manager.state("t-c1"), TunnelState::Stopped);

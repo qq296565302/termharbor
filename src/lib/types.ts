@@ -79,8 +79,10 @@ export interface TunnelDto {
   localPort: number;
   targetHost: string;
   targetPort: number;
-  /** `stopped` | `listening` | `failed` */
-  state: "stopped" | "listening" | "failed";
+  /** 应用启动时是否自动拉起 */
+  autoStart: boolean;
+  /** `stopped` | `listening` | `reconnecting` | `failed` */
+  state: "stopped" | "listening" | "reconnecting" | "failed";
   message: string | null;
   createdAt: number;
 }

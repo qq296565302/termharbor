@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { open, save as saveFile } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useState } from "react";
 
@@ -296,6 +297,29 @@ export default function ConnectionsPage() {
     void reloadTunnels(editingId);
   }, [editingId, reloadTunnels]);
 
+  // 隧道状态可能在后台自己变（断线重连、重连成功），不经过任何一次点击，
+  // 所以得听事件，否则界面会一直停在最后一次操作的结果上。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ tunnelId: string; state: TunnelDto["state"]; message: string | null }>(
+      "tunnel:state",
+      (event) => {
+        const { tunnelId, state, message } = event.payload;
+        setTunnels((prev) =>
+          prev.map((item) => (item.id === tunnelId ? { ...item, state, message } : item)),
+        );
+      },
+    ).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   const addTunnel = async () => {
     if (!editingId) return;
     const localPort = Number.parseInt(tunnelDraft.localPort, 10);
@@ -326,16 +350,32 @@ export default function ConnectionsPage() {
   const toggleTunnel = async (tunnel: TunnelDto) => {
     setTunnelBusy(true);
     try {
-      await call<TunnelDto>(
-        tunnel.state === "listening" ? "tunnel_stop" : "tunnel_start",
-        { id: tunnel.id },
-      );
+      // 重连中说明监听还在，这个按钮该是"停止"
+      const running = tunnel.state === "listening" || tunnel.state === "reconnecting";
+      await call<TunnelDto>(running ? "tunnel_stop" : "tunnel_start", { id: tunnel.id });
       await reloadTunnels(editingId);
       setNotice(null);
     } catch (err) {
       // 失败原因（端口被占、远端连不上）比"失败"两个字有用得多
       setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
       await reloadTunnels(editingId);
+    } finally {
+      setTunnelBusy(false);
+    }
+  };
+
+  /// 自动启动只是改下次启动的行为，不立刻拉起或停掉这条规则
+  const toggleAutoStart = async (tunnel: TunnelDto) => {
+    setTunnelBusy(true);
+    try {
+      const next = await call<TunnelDto>("tunnel_set_auto_start", {
+        id: tunnel.id,
+        autoStart: !tunnel.autoStart,
+      });
+      setTunnels((prev) => prev.map((item) => (item.id === next.id ? next : item)));
+      setNotice(null);
+    } catch (err) {
+      setNotice({ tone: "danger", title: fromUnknown(err).message, detail: detailOf(err) });
     } finally {
       setTunnelBusy(false);
     }
@@ -815,20 +855,33 @@ export default function ConnectionsPage() {
                             {tunnel.targetHost}:{tunnel.targetPort}
                           </code>
                         </span>
+                        <label className="tunnel__auto" title="应用启动时自动拉起这条规则">
+                          <input
+                            type="checkbox"
+                            checked={tunnel.autoStart}
+                            disabled={tunnelBusy}
+                            onChange={() => void toggleAutoStart(tunnel)}
+                          />
+                          自动
+                        </label>
                         <span
                           className={`pill ${
                             tunnel.state === "listening"
                               ? "pill--ok"
-                              : tunnel.state === "failed"
+                              : tunnel.state === "reconnecting"
                                 ? "pill--warn"
-                                : ""
+                                : tunnel.state === "failed"
+                                  ? "pill--danger"
+                                  : ""
                           }`}
                         >
                           {tunnel.state === "listening"
                             ? "运行中"
-                            : tunnel.state === "failed"
-                              ? "失败"
-                              : "未启动"}
+                            : tunnel.state === "reconnecting"
+                              ? "重连中"
+                              : tunnel.state === "failed"
+                                ? "失败"
+                                : "未启动"}
                         </span>
                         <span className="tunnel__actions">
                           <button
@@ -837,7 +890,9 @@ export default function ConnectionsPage() {
                             disabled={tunnelBusy}
                             onClick={() => void toggleTunnel(tunnel)}
                           >
-                            {tunnel.state === "listening" ? "停止" : "启动"}
+                            {tunnel.state === "listening" || tunnel.state === "reconnecting"
+                              ? "停止"
+                              : "启动"}
                           </button>
                           <button
                             type="button"
@@ -848,8 +903,16 @@ export default function ConnectionsPage() {
                             删除
                           </button>
                         </span>
-                        {tunnel.state === "failed" && tunnel.message ? (
-                          <p className="tunnel__error">{tunnel.message}</p>
+                        {tunnel.message && tunnel.state !== "listening" ? (
+                          <p
+                            className={
+                              tunnel.state === "reconnecting"
+                                ? "tunnel__error tunnel__error--soft"
+                                : "tunnel__error"
+                            }
+                          >
+                            {tunnel.message}
+                          </p>
                         ) : null}
                       </li>
                     ))}

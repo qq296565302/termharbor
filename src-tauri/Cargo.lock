@@ -5130,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "termharbor"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "aes-gcm 0.10.3",
  "argon2 0.5.3",

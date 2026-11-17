@@ -225,7 +225,7 @@ const importPreview = {
   })),
 };
 
-/** 转发规则夹具：一条运行中、一条未启动、一条失败（错误文案要能显示出来） */
+/** 转发规则夹具：运行中 / 未启动 / 重连中 / 失败，自动启动开关也要有开有关 */
 const tunnelFixtures: TunnelDto[] = [
   {
     id: "t1",
@@ -233,6 +233,7 @@ const tunnelFixtures: TunnelDto[] = [
     localPort: 13306,
     targetHost: "10.0.3.21",
     targetPort: 3306,
+    autoStart: true,
     state: "listening",
     message: null,
     createdAt: now - 3 * 60 * MIN,
@@ -243,6 +244,7 @@ const tunnelFixtures: TunnelDto[] = [
     localPort: 16379,
     targetHost: "10.0.3.21",
     targetPort: 6379,
+    autoStart: false,
     state: "stopped",
     message: null,
     createdAt: now - 2 * 60 * MIN,
@@ -250,9 +252,21 @@ const tunnelFixtures: TunnelDto[] = [
   {
     id: "t3",
     connectionId: "c2",
-    localPort: 13306,
+    localPort: 15432,
+    targetHost: "10.0.3.21",
+    targetPort: 5432,
+    autoStart: true,
+    state: "reconnecting",
+    message: "连接已断开，正在重连",
+    createdAt: now - 5 * 60 * MIN,
+  },
+  {
+    id: "t4",
+    connectionId: "c2",
+    localPort: 13307,
     targetHost: "47.94.196.217",
     targetPort: 13306,
+    autoStart: false,
     state: "failed",
     message:
       "远端连不上 47.94.196.217:13306（Failed to open channel (ConnectFailed)）。目标填的是这台服务器自己的公网 IP —— 云主机通常连不回自己的公网地址，换成 127.0.0.1 或内网 IP",
@@ -265,6 +279,7 @@ Object.assign(responses, {
   tunnel_create: tunnelFixtures[1],
   tunnel_start: tunnelFixtures[0],
   tunnel_stop: tunnelFixtures[1],
+  tunnel_set_auto_start: tunnelFixtures[0],
   tunnel_delete: null,
   "plugin:dialog|open": "C:/Users/me/Desktop/termharbor-connections.json",
   config_import_preview: importPreview,

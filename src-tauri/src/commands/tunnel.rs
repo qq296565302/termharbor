@@ -1,9 +1,11 @@
 //! 本地端口转发（`-L`）的 command。
 //!
 //! 只做校验、拼装探测请求、调运行时与写状态；网络细节在 `ssh::tunnel`。
+//! 状态变化统一走 `TunnelManager` 注入的通知口（`EVT_TUNNEL_STATE`），
+//! 重连这类发生在后台任务里的事件也能发出去。
 
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::State;
 
 use crate::commands::connections::prepare_probe;
 use crate::error::{AppError, AppResult};
@@ -21,9 +23,11 @@ pub struct TunnelDto {
     pub local_port: u16,
     pub target_host: String,
     pub target_port: u16,
-    /// `stopped` | `listening` | `failed`
+    /// 应用启动时是否自动拉起
+    pub auto_start: bool,
+    /// `stopped` | `listening` | `reconnecting` | `failed`
     pub state: String,
-    /// 失败原因（`state == failed` 时有值）
+    /// 失败/重连原因（`state` 是 `failed` 或 `reconnecting` 时有值）
     pub message: Option<String>,
     pub created_at: i64,
 }
@@ -33,6 +37,7 @@ impl TunnelDto {
         let (kind, message) = match state {
             TunnelState::Stopped => ("stopped", None),
             TunnelState::Listening { .. } => ("listening", None),
+            TunnelState::Reconnecting { message } => ("reconnecting", Some(message)),
             TunnelState::Failed { message } => ("failed", Some(message)),
         };
         Self {
@@ -41,6 +46,7 @@ impl TunnelDto {
             local_port: rec.local_port,
             target_host: rec.target_host.clone(),
             target_port: rec.target_port,
+            auto_start: rec.auto_start,
             state: kind.to_string(),
             message,
             created_at: rec.created_at,
@@ -73,6 +79,7 @@ pub async fn tunnel_create(
     local_port: u16,
     target_host: String,
     target_port: u16,
+    auto_start: Option<bool>,
 ) -> AppResult<TunnelDto> {
     let target_host = target_host.trim().to_string();
     if local_port < 1 {
@@ -97,7 +104,8 @@ pub async fn tunnel_create(
         })
         .await?;
 
-    let rec = TunnelRecord::new(connection_id, local_port, target_host, target_port);
+    let rec = TunnelRecord::new(connection_id, local_port, target_host, target_port)
+        .with_auto_start(auto_start.unwrap_or(false));
     state
         .db
         .call({
@@ -110,41 +118,27 @@ pub async fn tunnel_create(
         tunnel = %rec.id,
         local = rec.local_port,
         target = %format!("{}:{}", rec.target_host, rec.target_port),
+        auto_start = rec.auto_start,
         "已保存转发规则"
     );
     Ok(TunnelDto::from_record(&rec, TunnelState::Stopped))
 }
 
-/// 删除规则；正在跑的先停掉。
+/// 改一条规则的自动启动开关。开关只影响下次启动，不会立刻拉起或停掉。
 #[tauri::command]
-pub async fn tunnel_delete(
-    app: tauri::AppHandle,
+pub async fn tunnel_set_auto_start(
     state: State<'_, AppState>,
     id: String,
-) -> AppResult<()> {
-    state.tunnels.stop(&id);
+    auto_start: bool,
+) -> AppResult<TunnelDto> {
     state
         .db
         .call({
             let id = id.clone();
-            move |conn| tunnels::delete(conn, &id)
+            move |conn| tunnels::set_auto_start(conn, &id, auto_start)
         })
         .await?;
 
-    let _ = app.emit(
-        crate::events::EVT_TUNNEL_STATE,
-        serde_json::json!({ "tunnelId": id, "state": "stopped" }),
-    );
-    Ok(())
-}
-
-/// 启动转发。
-#[tauri::command]
-pub async fn tunnel_start(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<TunnelDto> {
     let rec = state
         .db
         .call({
@@ -153,26 +147,38 @@ pub async fn tunnel_start(
         })
         .await?;
 
-    // 用这条连接（含它的跳板链）建隧道：指纹、凭据、兼容算法全都沿用原来那套
-    let prepared =
-        prepare_probe(state.inner(), Some(rec.connection_id.clone()), None, None).await?;
+    tracing::info!(tunnel = %rec.id, auto_start, "已更新自动启动开关");
+    Ok(TunnelDto::from_record(&rec, state.tunnels.state(&rec.id)))
+}
 
-    let request = StartRequest {
-        tunnel_id: rec.id.clone(),
-        connection_id: rec.connection_id.clone(),
-        local_port: rec.local_port,
-        target_host: rec.target_host.clone(),
-        target_port: rec.target_port,
-        probe: prepared.request,
-    };
+/// 删除规则；正在跑的先停掉。
+#[tauri::command]
+pub async fn tunnel_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.tunnels.stop(&id);
+    state
+        .db
+        .call({
+            let id = id.clone();
+            move |conn| tunnels::delete(conn, &id)
+        })
+        .await?;
+    Ok(())
+}
 
-    match state.tunnels.start(request).await {
+/// 启动转发。
+#[tauri::command]
+pub async fn tunnel_start(state: State<'_, AppState>, id: String) -> AppResult<TunnelDto> {
+    let rec = state
+        .db
+        .call({
+            let id = id.clone();
+            move |conn| tunnels::get(conn, &id)
+        })
+        .await?;
+
+    match start_record(state.inner(), &rec).await {
         Ok(port) => {
             tracing::info!(tunnel = %rec.id, port, "转发已就绪");
-            let _ = app.emit(
-                crate::events::EVT_TUNNEL_STATE,
-                serde_json::json!({ "tunnelId": rec.id, "state": "listening", "port": port }),
-            );
             Ok(TunnelDto::from_record(
                 &rec,
                 TunnelState::Listening { port },
@@ -186,10 +192,7 @@ pub async fn tunnel_start(
                 .clone()
                 .unwrap_or_else(|| err.message.to_string());
             state.tunnels.note_failure(&rec.id, note.clone());
-            let _ = app.emit(
-                crate::events::EVT_TUNNEL_STATE,
-                serde_json::json!({ "tunnelId": rec.id, "state": "failed", "message": note }),
-            );
+            state.tunnels.announce(&rec.id, "failed", Some(&note));
             Err(err)
         }
     }
@@ -197,11 +200,7 @@ pub async fn tunnel_start(
 
 /// 停止转发（规则保留，下次还能点启动）。
 #[tauri::command]
-pub async fn tunnel_stop(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<TunnelDto> {
+pub async fn tunnel_stop(state: State<'_, AppState>, id: String) -> AppResult<TunnelDto> {
     state.tunnels.stop(&id);
     let rec = state
         .db
@@ -210,10 +209,65 @@ pub async fn tunnel_stop(
             move |conn| tunnels::get(conn, &id)
         })
         .await?;
-
-    let _ = app.emit(
-        crate::events::EVT_TUNNEL_STATE,
-        serde_json::json!({ "tunnelId": rec.id, "state": "stopped" }),
-    );
     Ok(TunnelDto::from_record(&rec, TunnelState::Stopped))
+}
+
+/// 拉起所有打开了自动启动的规则。
+///
+/// 启动时机由 `lib.rs` 在窗口起来后延迟触发 —— 这时网络栈才就绪，
+/// 开机自启的场景不至于每一条都失败。失败只记状态，不阻断其它规则。
+pub async fn apply_auto_start(state: &AppState) -> usize {
+    let rows = match state.db.call(tunnels::list_auto_start).await {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::warn!(error = %err.message, "读取自动启动规则失败");
+            return 0;
+        }
+    };
+
+    let mut started = 0usize;
+    for rec in rows {
+        // 手动点过、已经在跑的别重复建连
+        if matches!(state.tunnels.state(&rec.id), TunnelState::Listening { .. }) {
+            started += 1;
+            continue;
+        }
+        match start_record(state, &rec).await {
+            Ok(port) => {
+                started += 1;
+                tracing::info!(tunnel = %rec.id, port, "自动启动转发成功");
+            }
+            Err(err) => {
+                let note = err
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| err.message.to_string());
+                state.tunnels.note_failure(&rec.id, note.clone());
+                tracing::warn!(
+                    tunnel = %rec.id,
+                    target = %format!("{}:{}", rec.target_host, rec.target_port),
+                    error = %note,
+                    "自动启动转发失败"
+                );
+            }
+        }
+    }
+    started
+}
+
+/// 建连 + 开监听。状态通知由 `TunnelManager` 内部发出，这里不碰事件。
+async fn start_record(state: &AppState, rec: &TunnelRecord) -> AppResult<u16> {
+    // 用这条连接（含它的跳板链）建隧道：指纹、凭据、兼容算法全都沿用原来那套
+    let prepared = prepare_probe(state, Some(rec.connection_id.clone()), None, None).await?;
+
+    let request = StartRequest {
+        tunnel_id: rec.id.clone(),
+        connection_id: rec.connection_id.clone(),
+        local_port: rec.local_port,
+        target_host: rec.target_host.clone(),
+        target_port: rec.target_port,
+        probe: prepared.request,
+    };
+
+    state.tunnels.start(request).await
 }

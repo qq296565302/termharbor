@@ -1115,6 +1115,12 @@ a:focus-visible,
   color: var(--ok);
 }
 
+.pill--danger {
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+}
+
 /* ---- 本地转发（-L）：规则挂在连接上，跟这台机器走 ---- */
 .tunnel {
   display: flex;
@@ -1150,13 +1156,37 @@ a:focus-visible,
 
 .tunnel__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 8px;
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--bg-subtle);
+}
+
+/* 自动启动开关：只影响下次启动，跟着规则一起放，不占按钮位 */
+.tunnel__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tunnel__auto input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.tunnel__auto:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .tunnel__map {
@@ -1191,6 +1221,11 @@ a:focus-visible,
   color: var(--danger);
   font-size: var(--fs-xs);
   line-height: 1.5;
+}
+
+/* 重连中的提示不是错误：规则还活着，只是链路断了正在接回来 */
+.tunnel__error--soft {
+  color: var(--warn);
 }
 
 .tunnel__add {
