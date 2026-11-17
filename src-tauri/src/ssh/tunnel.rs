@@ -533,9 +533,19 @@ async fn probe_target(handle: &client::Handle<ProbeHandler>, req: &StartRequest)
 fn target_hint(target: &str, own_host: &str) -> &'static str {
     if looks_like_own_address(target, own_host) {
         "目标填的是这台服务器自己的公网 IP —— 云主机通常连不回自己的公网地址，换成 127.0.0.1 或内网 IP"
+    } else if is_loopback(target) {
+        // 回环流量根本不经过防火墙，"防火墙没放行"在这里只会把人带偏
+        "服务器自己这个端口上没有程序在监听 —— 在终端里跑 ss -lnt 核对实际端口"
     } else {
         "地址/端口写错，或那台机器的防火墙没放行"
     }
+}
+
+fn is_loopback(host: &str) -> bool {
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 /// 目标是不是"这台机器自己的地址"（回环地址不算：那是本机服务，完全正常）。
@@ -545,11 +555,7 @@ fn looks_like_own_address(target: &str, own_host: &str) -> bool {
     if target.is_empty() || own.is_empty() {
         return false;
     }
-    let is_loopback = matches!(
-        target.to_ascii_lowercase().as_str(),
-        "127.0.0.1" | "localhost" | "::1"
-    );
-    !is_loopback && target.eq_ignore_ascii_case(own)
+    !is_loopback(target) && target.eq_ignore_ascii_case(own)
 }
 
 fn bind_error(port: u16, err: &std::io::Error) -> AppError {
@@ -589,6 +595,29 @@ fn to_app_error(result: ProbeResult) -> AppError {
 mod tests {
     use super::*;
     use crate::ssh::test_support::{spawn, HostKey};
+
+    /// 目标是回环时，失败只可能是"那台机器上这个端口没程序"，别扯防火墙。
+    #[test]
+    fn loopback_failure_blames_missing_listener_not_firewall() {
+        for target in ["127.0.0.1", "localhost", "::1"] {
+            let hint = target_hint(target, "47.94.196.217");
+            assert!(
+                hint.contains("ss -lnt"),
+                "{target} 要给可执行的下一步：{hint}"
+            );
+            assert!(
+                !hint.contains("防火墙"),
+                "{target} 的回环流量不过防火墙：{hint}"
+            );
+        }
+    }
+
+    /// 非回环、也不是自己公网 IP 的目标，防火墙仍然是最常见的原因。
+    #[test]
+    fn remote_target_still_mentions_firewall() {
+        let hint = target_hint("10.0.3.21", "47.94.196.217");
+        assert!(hint.contains("防火墙"), "{hint}");
+    }
 
     fn start_req(connection_id: &str, probe: ProbeRequest) -> StartRequest {
         StartRequest {

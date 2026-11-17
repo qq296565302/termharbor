@@ -846,11 +846,14 @@ export default function ConnectionsPage() {
                   <ul className="tunnel__list">
                     {tunnels.map((tunnel) => (
                       <li key={tunnel.id} className="tunnel__row">
+                        {/* 两个 127.0.0.1 分属两台机器，光看地址分不清，必须标出各自身份 */}
                         <span className="tunnel__map">
+                          <span className="tunnel__side">本机</span>
                           <code>
                             127.0.0.1:{tunnel.localPort}
                           </code>
                           <span className="tunnel__arrow">→</span>
+                          <span className="tunnel__side">服务器</span>
                           <code>
                             {tunnel.targetHost}:{tunnel.targetPort}
                           </code>
@@ -933,7 +936,7 @@ export default function ConnectionsPage() {
                   />
                   <input
                     className="input"
-                    placeholder="目标地址，如 10.0.3.21"
+                    placeholder="目标地址（服务器侧）"
                     value={tunnelDraft.targetHost}
                     onChange={(e) => setTunnelDraft({ ...tunnelDraft, targetHost: e.target.value })}
                   />
@@ -955,6 +958,10 @@ export default function ConnectionsPage() {
                     添加
                   </button>
                 </div>
+                <p className="field__hint tunnel__note">
+                  左边是本机入口，右边从服务器那边看。服务器自己的服务填 127.0.0.1，
+                  内网另一台机器填它的 IP。
+                </p>
               </section>
             ) : null}
 

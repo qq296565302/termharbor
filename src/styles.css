@@ -1192,9 +1192,17 @@ a:focus-visible,
 .tunnel__map {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   color: var(--text);
+}
+
+/* 「本机 / 服务器」：两个 127.0.0.1 分属两台机器，靠这层小字区分身份 */
+.tunnel__side {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.02em;
 }
 
 .tunnel__map code {
@@ -1207,6 +1215,7 @@ a:focus-visible,
 }
 
 .tunnel__arrow {
+  margin: 0 2px;
   color: var(--text-faint);
 }
 
@@ -1233,6 +1242,10 @@ a:focus-visible,
   grid-template-columns: 92px minmax(0, 1fr) 92px auto;
   gap: 6px;
   align-items: center;
+}
+
+.tunnel__note {
+  margin: 6px 0 0;
 }
 
 .conn-editor {
