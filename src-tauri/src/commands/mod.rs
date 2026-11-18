@@ -7,6 +7,7 @@ pub mod advanced;
 pub mod backup;
 pub mod config_io;
 pub mod connections;
+pub mod db;
 pub mod dev;
 pub mod diag;
 pub mod history;

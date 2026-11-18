@@ -7,6 +7,7 @@
 pub mod commands;
 pub mod config_io;
 pub mod crypto;
+pub mod dbcli;
 pub mod error;
 pub mod events;
 pub mod lease;
@@ -27,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 use crate::crypto::{default_provider, FieldCipher};
+use crate::dbcli::DbLinks;
 use crate::sftp::{SftpManager, Transfers};
 use crate::ssh::session::SessionManager;
 use crate::ssh::TunnelManager;
@@ -168,6 +170,7 @@ pub fn run() {
                 sftp: Arc::new(SftpManager::new()),
                 transfers: Arc::new(Transfers::new()),
                 tunnels: Arc::clone(&tunnels),
+                dblinks: Arc::new(DbLinks::new()),
                 started_at_ms: crate::state::now_millis(),
                 _logging: logging,
             });
@@ -264,6 +267,11 @@ pub fn run() {
             commands::tunnel::tunnel_delete,
             commands::tunnel::tunnel_start,
             commands::tunnel::tunnel_stop,
+            commands::db::db_account_get,
+            commands::db::db_account_save,
+            commands::db::db_account_clear,
+            commands::db::db_query,
+            commands::db::db_databases,
             commands::update::update_check,
             commands::update::update_open_page,
             commands::settings::settings_get,

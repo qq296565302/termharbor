@@ -13,6 +13,7 @@ import { createRoot } from "react-dom/client";
 import ConnectionsPage from "../pages/ConnectionsPage";
 import DiagPanel from "../pages/DiagPanel";
 import FilePanel from "../pages/FilePanel";
+import DbPanel from "../pages/DbPanel";
 import LoadPanel from "../pages/LoadPanel";
 import McpSettings from "../pages/McpSettings";
 import SnippetPanel from "../pages/SnippetPanel";
@@ -279,6 +280,25 @@ Object.assign(responses, {
   tunnel_create: tunnelFixtures[1],
   tunnel_start: tunnelFixtures[0],
   tunnel_stop: tunnelFixtures[1],
+  db_account_get: {
+    configured: true,
+    username: "root",
+    port: 13036,
+    database: "sgcc_ops",
+  },
+  // 含一个 NULL：验证 is-null 的灰色斜体，别让空值和字符串 "NULL" 看不出来
+  db_query: {
+    columns: ["id", "name", "status", "amount", "created_at"],
+    rows: [
+      ["10231", "华东-配电柜A3", "active", "12800.00", "2026-11-17 22:14:08"],
+      ["10230", "华北-环网柜B1", "active", "9600.00", "2026-11-17 21:02:41"],
+      ["10229", "西南-变压器T7", "NULL", "0.00", "2026-11-17 19:48:12"],
+      ["10228", "华南-开关站C2", "active", "23400.50", "2026-11-17 18:31:07"],
+      ["10227", "东北-电缆段D9", "archived", "5400.00", "2026-11-17 16:55:20"],
+    ],
+    truncated: false,
+    elapsedMs: 23,
+  },
   tunnel_set_auto_start: tunnelFixtures[0],
   tunnel_delete: null,
   "plugin:dialog|open": "C:/Users/me/Desktop/termharbor-connections.json",
@@ -482,6 +502,14 @@ function Preview() {
     return (
       <div style={{ width: "100%", height: "100vh", display: "flex", justifyContent: "flex-end" }}>
         <LoadPanel sessionId="s1" active onClose={() => undefined} />
+      </div>
+    );
+  }
+
+  if (panel === "db") {
+    return (
+      <div style={{ width: "100%", height: "100vh", display: "flex", justifyContent: "flex-end" }}>
+        <DbPanel connectionId="c1" onClose={() => undefined} />
       </div>
     );
   }

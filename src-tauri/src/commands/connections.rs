@@ -276,6 +276,17 @@ pub async fn connection_delete(state: State<'_, AppState>, id: String) -> AppRes
             move |conn| connections::delete(conn, &id)
         })
         .await?;
+
+    // 数据库账号跟着连接走：留着就是一条指向不存在机器的孤儿记录
+    state
+        .db
+        .call({
+            let id = id.clone();
+            move |conn| crate::storage::db_accounts::delete_for_connection(conn, &id)
+        })
+        .await?;
+    state.dblinks.forget(&id);
+
     tracing::info!(id = %id, tunnels = removed_tunnels.len(), "已删除连接配置");
     Ok(())
 }

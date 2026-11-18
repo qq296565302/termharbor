@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::crypto::{FieldCipher, KeySource};
+use crate::dbcli::DbLinks;
 use crate::error::{AppError, AppResult};
 use crate::logging::LoggingGuard;
 use crate::sftp::{SftpManager, Transfers};
@@ -151,6 +152,9 @@ pub struct AppState {
     pub transfers: Arc<Transfers>,
     /// 本地端口转发（`-L`）的运行时。不依附终端标签，自己建专用连接。
     pub tunnels: Arc<TunnelManager>,
+    /// 数据库查询用的 SSH 连接。和终端、SFTP、隧道各自独立，
+    /// 免得"关掉数据库面板"把终端连接一起带走。
+    pub dblinks: Arc<DbLinks>,
     /// 本进程启动时刻（毫秒）。
     ///
     /// 设置页核对「这条记录的租约是不是本进程写的」要用它：早于这个时刻的记录

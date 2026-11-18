@@ -89,6 +89,88 @@ pub(crate) async fn exec_once_limited(
     Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
+/// 执行一条命令，并把 `stdin` 写进它的标准输入，返回合并后的 stdout + stderr。
+///
+/// 数据库查询靠它把 `[client]` 连接配置（含密码）喂给
+/// `mysql --defaults-extra-file=/dev/stdin`：密码既不进命令行（`ps` 看不到）、
+/// 不落盘，也不会出现在任何错误信息里。
+///
+/// 读输出的循环和 `exec_once_limited` 是重复的 —— 那边的 `Channel` 类型带了
+/// 服务端消息参数，抽公共函数要额外引入一堆泛型约束，二十行不值得。
+pub(crate) async fn exec_with_stdin(
+    conn: &Handle<ProbeHandler>,
+    command: &str,
+    stdin: &[u8],
+    timeout: Duration,
+    max_output: usize,
+) -> AppResult<String> {
+    let mut channel = conn
+        .channel_open_session()
+        .await
+        .map_err(|err| AppError::with_detail(ErrCode::SshDisconnected, err.to_string()))?;
+
+    if let Err(err) = channel.exec(true, command).await {
+        let _ = channel.close().await;
+        return Err(AppError::with_detail(
+            ErrCode::SshDisconnected,
+            err.to_string(),
+        ));
+    }
+
+    // 写完必须立刻 EOF：对面读到文件末尾才会开始执行，否则会一直等输入。
+    if let Err(err) = channel.data(stdin).await {
+        let _ = channel.close().await;
+        return Err(AppError::with_detail(
+            ErrCode::SshDisconnected,
+            err.to_string(),
+        ));
+    }
+    let _ = channel.eof().await;
+
+    let collected = tokio::time::timeout(timeout, async {
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut truncated = false;
+
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) => {
+                    if buffer.len() + data.len() > max_output {
+                        truncated = true;
+                        break;
+                    }
+                    buffer.extend_from_slice(&data);
+                }
+                Some(ChannelMsg::ExtendedData { data, .. })
+                    if buffer.len() + data.len() <= max_output =>
+                {
+                    buffer.extend_from_slice(&data);
+                }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+
+        (buffer, truncated)
+    })
+    .await;
+
+    let _ = channel.close().await;
+
+    // 错误里刻意不带 command：里面是用户写的 SQL，可能有敏感条件或数据。
+    let (buffer, truncated) = collected.map_err(|_| {
+        AppError::with_detail(
+            ErrCode::SshTcpTimeout,
+            format!("命令执行超时（>{timeout:?}）"),
+        )
+    })?;
+
+    if truncated {
+        tracing::warn!("stdin 命令输出超过上限，已截断");
+    }
+
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
 /// 建一条临时连接、跑一条命令、断开。
 ///
 /// GUI 的诊断复用终端会话的连接，MCP 没有长期会话，所以每次新开一条、用完即关。

@@ -32,6 +32,8 @@ pub enum ErrCode {
     SshJumpFailed,
     /// 本地端口转发起不来：本机端口被占用，或远端连不上目标
     TunnelFailed,
+    /// 数据库查询失败：凭据不对、SQL 报错，或服务器上没装 mysql 客户端
+    DbQueryFailed,
     // ---- SFTP（M3 起使用）
     SftpPermissionDenied,
     SftpNotFound,
@@ -62,6 +64,7 @@ impl ErrCode {
             ErrCode::SshSessionNotFound => "会话不存在或已关闭",
             ErrCode::SshJumpFailed => "跳板机无法把连接转发到目标服务器",
             ErrCode::TunnelFailed => "本地转发未能建立",
+            ErrCode::DbQueryFailed => "数据库查询失败",
             ErrCode::SftpPermissionDenied => "权限不足，无法执行该操作",
             ErrCode::SftpNotFound => "文件或目录不存在",
             ErrCode::SftpIoError => "文件传输失败",
@@ -87,6 +90,7 @@ impl ErrCode {
             ErrCode::SshSessionNotFound => "SSH_SESSION_NOT_FOUND",
             ErrCode::SshJumpFailed => "SSH_JUMP_FAILED",
             ErrCode::TunnelFailed => "TUNNEL_FAILED",
+            ErrCode::DbQueryFailed => "DB_QUERY_FAILED",
             ErrCode::SftpPermissionDenied => "SFTP_PERMISSION_DENIED",
             ErrCode::SftpNotFound => "SFTP_NOT_FOUND",
             ErrCode::SftpIoError => "SFTP_IO_ERROR",

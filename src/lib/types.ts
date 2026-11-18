@@ -71,6 +71,23 @@ export interface ConnectionInput {
   jumpConnectionId?: string | null;
 }
 
+/** 数据库账号视图。对应 `commands/db.rs::DbAccountDto` —— **不含密码**，只说明配过没有 */
+export interface DbAccountDto {
+  configured: boolean;
+  username: string;
+  port: number;
+  database: string;
+}
+
+/** 一次 SQL 查询的结果。对应 `commands/db.rs::QueryResultDto` */
+export interface DbQueryResult {
+  columns: string[];
+  rows: string[][];
+  /** 输出超过上限被截断，前面的行仍然有效 */
+  truncated: boolean;
+  elapsedMs: number;
+}
+
 /** 本地端口转发（`-L`）。对应 `commands/tunnel.rs::TunnelDto` */
 export interface TunnelDto {
   id: string;

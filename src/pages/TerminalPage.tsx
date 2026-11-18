@@ -27,6 +27,7 @@ import type {
 } from "../lib/types";
 import DiagPanel from "./DiagPanel";
 import FilePanel from "./FilePanel";
+import DbPanel from "./DbPanel";
 import LoadPanel from "./LoadPanel";
 import { TERM_THEMES } from "./SettingsPage";
 import { useSessionStore, type TerminalTab } from "../stores/sessionStore";
@@ -473,7 +474,7 @@ export default function TerminalPage() {
    * 而不是靠每个按钮里手写 `setOther(false)` 维持 —— 那种写法迟早漏一处。
    */
   const [sidePanel, setSidePanel] = useState<
-    "snippet" | "files" | "load" | "advanced" | null
+    "snippet" | "files" | "db" | "load" | "advanced" | null
   >(null);
   /** 哪些标签打开过文件面板。保持挂载，切走再回来目录和传输进度还在。 */
   const [filePanels, setFilePanels] = useState<string[]>([]);
@@ -784,7 +785,7 @@ export default function TerminalPage() {
   };
 
   /** 再点一次同一个按钮就收起。 */
-  const togglePanel = (panel: "snippet" | "files" | "load" | "advanced") => {
+  const togglePanel = (panel: "snippet" | "files" | "db" | "load" | "advanced") => {
     // 手动收起文件面板 = 明确表态"这次不用它"，别再被自动展开弹回来
     if (panel === "files" && sidePanel === "files" && activeTabId) {
       autoFilesHandled.current.add(activeTabId);
@@ -1000,6 +1001,21 @@ export default function TerminalPage() {
 
           <button
             type="button"
+            className={`btn btn--ghost btn--sm ${sidePanel === "db" ? "is-on" : ""}`}
+            title="数据库（写 SQL 看结果，走 SSH 通道执行）"
+            disabled={!activeTabId}
+            onClick={() => togglePanel("db")}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <ellipse cx="8" cy="4.2" rx="4.6" ry="1.7" />
+              <path d="M3.4 4.2v7.4c0 .9 2.1 1.7 4.6 1.7s4.6-.8 4.6-1.7V4.2" />
+              <path d="M3.4 7.9c0 .9 2.1 1.7 4.6 1.7s4.6-.8 4.6-1.7" />
+            </svg>
+            数据库
+          </button>
+
+          <button
+            type="button"
             className={`btn btn--ghost btn--sm ${sidePanel === "load" ? "is-on" : ""}`}
             title="负载看板（CPU / 内存 / 磁盘 / 网络，每 3 秒刷新）"
             disabled={!activeTabId}
@@ -1079,6 +1095,13 @@ export default function TerminalPage() {
             sessionId={
               tabs.find((tab) => tab.tabId === activeTabId)?.sessionId ?? null
             }
+          />
+        ) : null}
+
+        {sidePanel === "db" ? (
+          <DbPanel
+            connectionId={activeTab?.connectionId ?? null}
+            onClose={() => setSidePanel(null)}
           />
         ) : null}
 

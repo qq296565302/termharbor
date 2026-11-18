@@ -3896,6 +3896,232 @@ a:focus-visible,
 
 /* ------------------------------------------------------------ 负载看板 */
 
+/* ---- 数据库面板：偶尔查一条数据，不是 Navicat 的替代品 ---- */
+.term-db {
+  display: flex;
+  flex: 0 0 min(600px, 60%);
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.term-db__head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.term-db__title {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+/* 账号串和负载面板的 host 同位：一眼看出"现在连的是哪个库" */
+.term-db__meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.term-db__icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.term-db__icon:hover {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+
+.term-db__icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.db-tip {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
+.db-setup {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 12px;
+}
+
+.db-field {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.db-field > span {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.db-field .input {
+  width: 100%;
+}
+
+.db-setup__actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.db-editor {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-editor__input {
+  max-height: 220px;
+  min-height: 92px;
+  padding: 10px 12px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.db-editor__bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 6px 12px 8px;
+}
+
+.db-editor__hint {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.db-result {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.db-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.db-table th,
+.db-table td {
+  max-width: 320px;
+  padding: 4px 8px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 表头吸顶：数据几十行时要能一直看到列名。
+   底色比卡片沉一档，浅色主题下 bg-subtle 和白底几乎分不出来。 */
+.db-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.db-table td {
+  color: var(--text);
+}
+
+/* NULL 和字符串 "NULL" 在文本协议里分不开，只能靠颜色暗示"这多半是空值" */
+.db-table td.is-null {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.db-table tbody tr:hover td {
+  background: var(--bg-subtle);
+}
+
+.db-empty {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+.db-error {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.db-status {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.db-more {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
 .term-load {
   display: flex;
   flex: 0 0 min(560px, 56%);
