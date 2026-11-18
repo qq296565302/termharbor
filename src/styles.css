@@ -3901,6 +3901,9 @@ a:focus-visible,
   display: flex;
   flex: 0 0 min(600px, 60%);
   flex-direction: column;
+  /* flex item 默认 min-width: auto —— 表格内容一宽就把面板顶大，终端被挤没。
+     必须显式归零，让溢出变成 .db-result 的横向滚动条。 */
+  min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
@@ -3920,6 +3923,26 @@ a:focus-visible,
   color: var(--text);
   font-size: var(--fs-sm);
   font-weight: 500;
+}
+
+/* 库下拉：切换浏览目标，不改保存的默认库 */
+.term-db__db {
+  flex: 0 1 auto;
+  max-width: 190px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.term-db__db:disabled {
+  color: var(--text-faint);
+  cursor: default;
 }
 
 /* 账号串和负载面板的 host 同位：一眼看出"现在连的是哪个库" */
@@ -4084,7 +4107,9 @@ a:focus-visible,
 }
 
 .db-editor__input {
+  width: 100%;
   max-height: 220px;
+  min-width: 0;
   min-height: 92px;
   padding: 10px 12px;
   border: 0;
@@ -4112,8 +4137,13 @@ a:focus-visible,
 
 .db-result {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.db-table-wrap {
+  min-width: 0;
 }
 
 .db-table {

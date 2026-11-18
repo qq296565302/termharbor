@@ -137,13 +137,15 @@ pub async fn db_query(
     state: State<'_, AppState>,
     connection_id: String,
     sql: String,
+    // 面板上临时选中的库。给 None 就用账号配置里的默认库。
+    database: Option<String>,
 ) -> AppResult<QueryResultDto> {
     let sql = sql.trim().to_string();
     if sql.is_empty() {
         return Err(AppError::validation("SQL 不能为空"));
     }
 
-    let (result, elapsed_ms) = run_sql(&state, &connection_id, &sql).await?;
+    let (result, elapsed_ms) = run_sql(&state, &connection_id, database.as_deref(), &sql).await?;
     Ok(QueryResultDto {
         columns: result.columns,
         rows: result.rows,
@@ -158,7 +160,7 @@ pub async fn db_databases(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> AppResult<Vec<String>> {
-    let (result, _) = run_sql(&state, &connection_id, "show databases").await?;
+    let (result, _) = run_sql(&state, &connection_id, None, "show databases").await?;
     // 只取第一列；`show databases` 永远只有一列叫 Database
     Ok(result
         .rows
@@ -174,6 +176,8 @@ pub async fn db_databases(
 pub async fn db_schema(
     state: State<'_, AppState>,
     connection_id: String,
+    // 面板上临时选中的库；给 None 就用账号配置里的默认库。
+    database: Option<String>,
     refresh: Option<bool>,
 ) -> AppResult<SchemaSnapshot> {
     let cipher = state.require_cipher()?;
@@ -189,10 +193,12 @@ pub async fn db_schema(
             AppError::validation("这台服务器还没配数据库账号，先在面板里填一次用户名和密码")
         })?;
 
+    let effective = with_database(&rec, database.as_deref());
+
     if !refresh.unwrap_or(false) {
         if let Some(snapshot) = state
             .dblinks
-            .cached_schema(&connection_id, &rec.database_name)
+            .cached_schema(&connection_id, &effective.database_name)
         {
             return Ok(snapshot);
         }
@@ -205,15 +211,27 @@ pub async fn db_schema(
         .handle(&connection_id, &prepared.request)
         .await?;
 
-    let snapshot = schema::fetch(&handle, &rec, &password).await?;
+    let snapshot = schema::fetch(&handle, &effective, &password).await?;
     state.dblinks.store_schema(&connection_id, snapshot.clone());
     Ok(snapshot)
+}
+
+/// 面板上临时选的库优先；没选就用账号配置里的默认库。
+///
+/// 只影响这一次请求，**不写回配置** —— 切库是浏览行为，不该悄悄改掉用户存的默认库。
+fn with_database(rec: &DbAccount, database: Option<&str>) -> DbAccount {
+    let mut effective = rec.clone();
+    if let Some(db) = database.map(str::trim).filter(|db| !db.is_empty()) {
+        effective.database_name = db.to_string();
+    }
+    effective
 }
 
 /// 取账号 → 解密 → 连上 → 执行。`db_query` 和 `db_databases` 共用。
 async fn run_sql(
     state: &AppState,
     connection_id: &str,
+    database: Option<&str>,
     sql: &str,
 ) -> AppResult<(QueryResult, u64)> {
     let cipher = state.require_cipher()?;
@@ -229,6 +247,7 @@ async fn run_sql(
             AppError::validation("这台服务器还没配数据库账号，先在面板里填一次用户名和密码")
         })?;
 
+    let effective = with_database(&rec, database);
     let password = cipher.decrypt_string(&rec.password_blob)?;
 
     let prepared = prepare_probe(state, Some(connection_id.to_string()), None, None).await?;
@@ -238,6 +257,6 @@ async fn run_sql(
         .await?;
 
     let started = std::time::Instant::now();
-    let result = dbcli::query(&handle, &rec, &password, sql).await?;
+    let result = dbcli::query(&handle, &effective, &password, sql).await?;
     Ok((result, started.elapsed().as_millis() as u64))
 }

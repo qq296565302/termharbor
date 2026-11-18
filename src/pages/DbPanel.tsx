@@ -28,6 +28,9 @@ export default function DbPanel({ connectionId, onClose }: Props) {
   const [schema, setSchema] = useState<SchemaSnapshot | null>(null);
   const [schemaBusy, setSchemaBusy] = useState(false);
   const [showTables, setShowTables] = useState(true);
+  const [databases, setDatabases] = useState<string[]>([]);
+  /** 面板当前看着哪个库。只影响这个面板，不写回保存的默认库。 */
+  const [activeDatabase, setActiveDatabase] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 回车连按时挡住第二次：setBusy 是异步的，光看 state 会漏 */
@@ -60,26 +63,62 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     void load(connectionId);
   }, [connectionId, load]);
 
-  const loadSchema = useCallback(async (id: string, refresh = false) => {
-    setSchemaBusy(true);
+  const loadSchema = useCallback(
+    async (id: string, database: string, refresh = false) => {
+      if (!database) {
+        setSchema(null);
+        return;
+      }
+      setSchemaBusy(true);
+      try {
+        const snapshot = await call<SchemaSnapshot>("db_schema", {
+          connectionId: id,
+          database,
+          refresh,
+        });
+        setSchema(snapshot);
+      } catch {
+        // 拿不到表结构不该挡住查询：补全只是锦上添花，SQL 照常能跑
+        setSchema(null);
+      } finally {
+        setSchemaBusy(false);
+      }
+    },
+    [],
+  );
+
+  const loadDatabases = useCallback(async (id: string, fallback: string) => {
     try {
-      const snapshot = await call<SchemaSnapshot>("db_schema", { connectionId: id, refresh });
-      setSchema(snapshot);
+      const list = await call<string[]>("db_databases", { connectionId: id });
+      setDatabases(list);
+      // 没配默认库、或默认库已经不在列表里，就落到第一个 —— 省得用户
+      // 先手动选一次才能看到表。
+      setActiveDatabase((prev) => {
+        if (prev && list.includes(prev)) return prev;
+        if (fallback && list.includes(fallback)) return fallback;
+        return list[0] ?? "";
+      });
     } catch {
-      // 拿不到表结构不该挡住查询：补全只是锦上添花，SQL 照常能跑
-      setSchema(null);
-    } finally {
-      setSchemaBusy(false);
+      setDatabases([]);
     }
   }, []);
 
   useEffect(() => {
     if (!connectionId || !account?.configured) {
+      setDatabases([]);
+      setActiveDatabase("");
+      return;
+    }
+    void loadDatabases(connectionId, account.database);
+  }, [connectionId, account?.configured, account?.database, loadDatabases]);
+
+  useEffect(() => {
+    if (!connectionId || !activeDatabase) {
       setSchema(null);
       return;
     }
-    void loadSchema(connectionId);
-  }, [connectionId, account?.configured, loadSchema]);
+    void loadSchema(connectionId, activeDatabase);
+  }, [connectionId, activeDatabase, loadSchema]);
 
   /** 点表名填一条查询。
    *
@@ -87,7 +126,7 @@ export default function DbPanel({ connectionId, onClose }: Props) {
    * 用户正在写一半的 SQL 不能被一次误点冲掉。
    */
   const insertTable = (table: TableSchema) => {
-    const qualified = account?.database ? `${account.database}.${table.name}` : table.name;
+    const qualified = activeDatabase ? `${activeDatabase}.${table.name}` : table.name;
     const statement = `select * from ${qualified} limit 20`;
     setSql((prev) => {
       const trimmed = prev.trim();
@@ -125,7 +164,11 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await call<DbQueryResult>("db_query", { connectionId, sql });
+      const res = await call<DbQueryResult>("db_query", {
+        connectionId,
+        sql,
+        database: activeDatabase || undefined,
+      });
       setResult(res);
     } catch (err) {
       setResult(null);
@@ -140,6 +183,24 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     <aside className="term-db">
       <div className="term-db__head">
         <span className="term-db__title">数据库</span>
+        <select
+          className="term-db__db"
+          value={activeDatabase}
+          disabled={!account?.configured || databases.length === 0}
+          onChange={(e) => {
+            setActiveDatabase(e.target.value);
+            setResult(null);
+            setError(null);
+          }}
+          title="切换要看的库（只影响这个面板，不改保存的默认库）"
+        >
+          {databases.length === 0 ? <option value="">—</option> : null}
+          {databases.map((db) => (
+            <option key={db} value={db}>
+              {db}
+            </option>
+          ))}
+        </select>
         <span className="term-db__meta" title={metaTitle(account)}>
           {metaText(account)}
         </span>
@@ -260,7 +321,7 @@ export default function DbPanel({ connectionId, onClose }: Props) {
                 type="button"
                 className="db-tables__action"
                 disabled={schemaBusy}
-                onClick={() => void loadSchema(connectionId, true)}
+                onClick={() => void loadSchema(connectionId, activeDatabase, true)}
               >
                 {schemaBusy ? "读取中…" : "刷新"}
               </button>
@@ -400,11 +461,11 @@ function textOf(err: unknown): string {
 function metaText(account: DbAccountDto | null): string {
   if (!account) return "";
   if (!account.configured) return "未配置";
-  const db = account.database || "未指定库";
-  return `${account.username}@${db}:${account.port}`;
+  // 库名已经在上面的下拉里了，这里只留账号和端口
+  return `${account.username}:${account.port}`;
 }
 
 function metaTitle(account: DbAccountDto | null): string {
   if (!account?.configured) return "";
-  return `账号 ${account.username}，默认库 ${account.database || "未指定"}，端口 ${account.port}`;
+  return `账号 ${account.username}，端口 ${account.port}`;
 }
