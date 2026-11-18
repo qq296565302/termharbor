@@ -31,6 +31,13 @@ export default function DbPanel({ connectionId, onClose }: Props) {
   const [databases, setDatabases] = useState<string[]>([]);
   /** 面板当前看着哪个库。只影响这个面板，不写回保存的默认库。 */
   const [activeDatabase, setActiveDatabase] = useState("");
+  /**
+   * 拉库列表 / 表结构失败的原因。
+   *
+   * 之前这里是静默 catch —— 下拉空着、表也列不出来，但用户看不到任何原因，
+   * 只能猜是软件坏了。凡是"该有东西却没有"的地方，都得把原因说出来。
+   */
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 回车连按时挡住第二次：setBusy 是异步的，光看 state 会漏 */
@@ -77,9 +84,11 @@ export default function DbPanel({ connectionId, onClose }: Props) {
           refresh,
         });
         setSchema(snapshot);
-      } catch {
-        // 拿不到表结构不该挡住查询：补全只是锦上添花，SQL 照常能跑
+        setLoadError(null);
+      } catch (err) {
+        // 拿不到表结构不挡住查询本身，但要把原因说出来
         setSchema(null);
+        setLoadError(textOf(err));
       } finally {
         setSchemaBusy(false);
       }
@@ -91,6 +100,7 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     try {
       const list = await call<string[]>("db_databases", { connectionId: id });
       setDatabases(list);
+      setLoadError(null);
       // 没配默认库、或默认库已经不在列表里，就落到第一个 —— 省得用户
       // 先手动选一次才能看到表。
       setActiveDatabase((prev) => {
@@ -98,8 +108,9 @@ export default function DbPanel({ connectionId, onClose }: Props) {
         if (fallback && list.includes(fallback)) return fallback;
         return list[0] ?? "";
       });
-    } catch {
+    } catch (err) {
       setDatabases([]);
+      setLoadError(textOf(err));
     }
   }, []);
 
@@ -183,24 +194,26 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     <aside className="term-db">
       <div className="term-db__head">
         <span className="term-db__title">数据库</span>
-        <select
-          className="term-db__db"
-          value={activeDatabase}
-          disabled={!account?.configured || databases.length === 0}
-          onChange={(e) => {
-            setActiveDatabase(e.target.value);
-            setResult(null);
-            setError(null);
-          }}
-          title="切换要看的库（只影响这个面板，不改保存的默认库）"
-        >
-          {databases.length === 0 ? <option value="">—</option> : null}
-          {databases.map((db) => (
-            <option key={db} value={db}>
-              {db}
-            </option>
-          ))}
-        </select>
+        {account?.configured ? (
+          <select
+            className="term-db__db"
+            value={activeDatabase}
+            disabled={databases.length === 0}
+            onChange={(e) => {
+              setActiveDatabase(e.target.value);
+              setResult(null);
+              setError(null);
+            }}
+            title="切换要看的库（只影响这个面板，不改保存的默认库）"
+          >
+            {databases.length === 0 ? <option value="">—</option> : null}
+            {databases.map((db) => (
+              <option key={db} value={db}>
+                {db}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <span className="term-db__meta" title={metaTitle(account)}>
           {metaText(account)}
         </span>
@@ -349,12 +362,18 @@ export default function DbPanel({ connectionId, onClose }: Props) {
                   ))}
                 </div>
               ) : (
-                <p className="db-tables__hint">
-                  {schemaBusy
-                    ? "读取表结构…"
-                    : account.database
-                      ? "这个库里没有表，或者当前账号读不到 information_schema"
-                      : "先在上面填一个「默认库」，才能列出表"}
+                <p
+                  className={
+                    loadError ? "db-tables__hint db-tables__hint--error" : "db-tables__hint"
+                  }
+                >
+                  {loadError
+                    ? `读不到库列表：${loadError}`
+                    : schemaBusy
+                      ? "读取表结构…"
+                      : activeDatabase
+                        ? "这个库里没有表，或者当前账号读不到 information_schema"
+                        : "没能确定要看的库"}
                 </p>
               )
             ) : null}

@@ -155,12 +155,16 @@ pub async fn db_query(
 }
 
 /// 库名列表，给面板顶部的下拉用。
+///
+/// **刻意不带默认库**：如果用户把默认库名写错了（`sgcc_opss` 之类），连上去会
+/// 直接 `Unknown database`，连"列库名"都做不到，人就卡死在配置里出不来。
+/// 列库名这件事本身不该依赖某个具体的库存不存在。
 #[tauri::command]
 pub async fn db_databases(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> AppResult<Vec<String>> {
-    let (result, _) = run_sql(&state, &connection_id, None, "show databases").await?;
+    let (result, _) = run_sql(&state, &connection_id, Some(""), "show databases").await?;
     // 只取第一列；`show databases` 永远只有一列叫 Database
     Ok(result
         .rows
@@ -216,13 +220,16 @@ pub async fn db_schema(
     Ok(snapshot)
 }
 
-/// 面板上临时选的库优先；没选就用账号配置里的默认库。
+/// 面板上选中的库优先；没选就用账号配置里的默认库。
+///
+/// `Some("")` 表示**明确不指定库** —— 列库名这类操作得能在默认库配错的情况下
+/// 照常工作，否则用户会被锁在一个连不上的配置里，连改都没法改。
 ///
 /// 只影响这一次请求，**不写回配置** —— 切库是浏览行为，不该悄悄改掉用户存的默认库。
 fn with_database(rec: &DbAccount, database: Option<&str>) -> DbAccount {
     let mut effective = rec.clone();
-    if let Some(db) = database.map(str::trim).filter(|db| !db.is_empty()) {
-        effective.database_name = db.to_string();
+    if let Some(db) = database {
+        effective.database_name = db.trim().to_string();
     }
     effective
 }
@@ -259,4 +266,34 @@ async fn run_sql(
     let started = std::time::Instant::now();
     let result = dbcli::query(&handle, &effective, &password, sql).await?;
     Ok((result, started.elapsed().as_millis() as u64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account() -> DbAccount {
+        DbAccount::new("c1", "root", b"blob".to_vec(), 3306).with_database("sgcc_ops")
+    }
+
+    #[test]
+    fn selected_database_wins() {
+        let effective = with_database(&account(), Some("taski"));
+        assert_eq!(effective.database_name, "taski");
+    }
+
+    #[test]
+    fn none_falls_back_to_the_configured_database() {
+        let effective = with_database(&account(), None);
+        assert_eq!(effective.database_name, "sgcc_ops");
+    }
+
+    /// 列库名时传空串。默认库写错的情况下必须能清掉，否则连"改回来"都做不到。
+    #[test]
+    fn empty_selection_clears_the_database() {
+        assert!(with_database(&account(), Some("")).database_name.is_empty());
+        assert!(with_database(&account(), Some("   "))
+            .database_name
+            .is_empty());
+    }
 }

@@ -4099,6 +4099,12 @@ a:focus-visible,
   line-height: 1.6;
 }
 
+/* 静默失败是最难查的：该有的东西没有，界面却装作一切正常 */
+.db-tables__hint--error {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 .db-editor {
   display: flex;
   flex: 0 0 auto;
