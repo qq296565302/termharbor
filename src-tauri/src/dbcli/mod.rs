@@ -22,6 +22,14 @@ use crate::ssh::client::{establish, ProbeHandler, ProbeRequest, ProbeResult, Pur
 use crate::ssh::exec::exec_with_stdin;
 use crate::storage::db_accounts::DbAccount;
 
+pub mod schema;
+
+use schema::SchemaSnapshot;
+
+/// 库表结构的缓存时长。改表结构是低频操作，十分钟足够；
+/// 用户建完表想立刻看到，点面板上的「刷新表结构」就行。
+const SCHEMA_TTL_MS: u64 = 10 * 60 * 1000;
+
 /// 查询超时。比诊断命令宽松：大表上 `count(*)` 确实可能跑一会儿。
 const QUERY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -47,6 +55,15 @@ pub struct QueryResult {
 #[derive(Default)]
 pub struct DbLinks {
     links: Mutex<HashMap<String, Arc<Handle<ProbeHandler>>>>,
+    /// 库表结构快照，按连接缓存。改账号或删连接时跟着清掉，
+    /// 否则补全里会一直留着已经失效的表名。
+    schema: Mutex<HashMap<String, SchemaEntry>>,
+}
+
+#[derive(Clone)]
+struct SchemaEntry {
+    at_ms: u64,
+    snapshot: SchemaSnapshot,
 }
 
 impl DbLinks {
@@ -81,10 +98,43 @@ impl DbLinks {
 
     pub fn forget(&self, connection_id: &str) {
         self.lock().remove(connection_id);
+        self.lock_schema().remove(connection_id);
+    }
+
+    /// 命中缓存的条件：同一个库、且没过期。
+    ///
+    /// 换了默认库就当没缓存 —— 旧库的表名拿来补全只会误导。
+    pub(crate) fn cached_schema(
+        &self,
+        connection_id: &str,
+        database: &str,
+    ) -> Option<SchemaSnapshot> {
+        let entry = self.lock_schema().get(connection_id).cloned()?;
+        if entry.snapshot.database != database {
+            return None;
+        }
+        let age = crate::state::now_millis().saturating_sub(entry.at_ms);
+        (age <= SCHEMA_TTL_MS).then_some(entry.snapshot)
+    }
+
+    pub(crate) fn store_schema(&self, connection_id: &str, snapshot: SchemaSnapshot) {
+        self.lock_schema().insert(
+            connection_id.to_string(),
+            SchemaEntry {
+                at_ms: crate::state::now_millis(),
+                snapshot,
+            },
+        );
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Handle<ProbeHandler>>>> {
         self.links
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_schema(&self) -> std::sync::MutexGuard<'_, HashMap<String, SchemaEntry>> {
+        self.schema
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -140,7 +190,13 @@ fn build_option_file(account: &DbAccount, password: &str) -> String {
     text.push_str("host=127.0.0.1\n");
     text.push_str(&format!("port={}\n", account.port));
     text.push_str(&format!("user=\"{}\"\n", escape_option(&account.username)));
-    text.push_str(&format!("password=\"{}\"\n", escape_option(password)));
+    // 密码留空 = 不写这一行，让 mysql 走服务器的 socket 认证 —— root 常被配成
+    // auth_socket，这时候本来就没有密码可填。
+    // **这不是"跳过认证"**：账号若是 caching_sha2_password 且密码非空，照样会 1045，
+    // 那个错误是对的，不要为此放宽成"匿名连接"。
+    if !password.is_empty() {
+        text.push_str(&format!("password=\"{}\"\n", escape_option(password)));
+    }
     if !account.database_name.is_empty() {
         text.push_str(&format!(
             "database=\"{}\"\n",
@@ -299,6 +355,14 @@ mod tests {
     fn empty_database_omits_the_key() {
         let rec = DbAccount::new("c1", "root", b"blob".to_vec(), 3306);
         assert!(!build_option_file(&rec, "x").contains("database="));
+    }
+
+    /// 密码留空时不写 `password=`，交给服务器的 socket 认证。
+    #[test]
+    fn empty_password_omits_the_key() {
+        let text = build_option_file(&account(), "");
+        assert!(!text.contains("password="), "{text}");
+        assert!(text.contains("user=\"root\""), "{text}");
     }
 
     #[test]

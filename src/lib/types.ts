@@ -79,6 +79,21 @@ export interface DbAccountDto {
   database: string;
 }
 
+/** 一张表的列名。对应 `dbcli/schema.rs::TableSchema` */
+export interface TableSchema {
+  name: string;
+  columns: string[];
+}
+
+/** 当前默认库的结构快照。对应 `dbcli/schema.rs::SchemaSnapshot` */
+export interface SchemaSnapshot {
+  /** 这份快照属于哪个库；空串表示还没配默认库 */
+  database: string;
+  tables: TableSchema[];
+  /** 输出被上限截断，列表可能不全 */
+  truncated: boolean;
+}
+
 /** 一次 SQL 查询的结果。对应 `commands/db.rs::QueryResultDto` */
 export interface DbQueryResult {
   columns: string[];

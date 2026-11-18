@@ -286,6 +286,20 @@ Object.assign(responses, {
     port: 13036,
     database: "sgcc_ops",
   },
+  db_schema: {
+    database: "sgcc_ops",
+    tables: [
+      { name: "devices", columns: ["id", "name", "status", "amount", "created_at"] },
+      { name: "device_logs", columns: ["id", "device_id", "level", "message", "at"] },
+      { name: "stations", columns: ["id", "code", "region", "capacity"] },
+      { name: "alarms", columns: ["id", "device_id", "kind", "raised_at", "cleared_at"] },
+      { name: "users", columns: ["id", "email", "role", "created_at"] },
+      { name: "audit_trail", columns: ["id", "actor", "action", "target", "at"] },
+      { name: "daily_stats", columns: ["day", "device_id", "uptime", "errors"] },
+      { name: "maintenance", columns: ["id", "device_id", "plan_at", "done_at", "note"] },
+    ],
+    truncated: false,
+  },
   // 含一个 NULL：验证 is-null 的灰色斜体，别让空值和字符串 "NULL" 看不出来
   db_query: {
     columns: ["id", "name", "status", "amount", "created_at"],

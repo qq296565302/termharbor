@@ -272,6 +272,7 @@ pub fn run() {
             commands::db::db_account_clear,
             commands::db::db_query,
             commands::db::db_databases,
+            commands::db::db_schema,
             commands::update::update_check,
             commands::update::update_open_page,
             commands::settings::settings_get,

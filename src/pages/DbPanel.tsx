@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AppError, fromUnknown } from "../lib/errors";
 import { call } from "../lib/ipc";
-import type { DbAccountDto, DbQueryResult } from "../lib/types";
+import type { DbAccountDto, DbQueryResult, SchemaSnapshot, TableSchema } from "../lib/types";
 
 /** 表格一次最多渲染这么多行。数据本身有 1MB 上限，但 2 万行 DOM 会明显卡。 */
 const MAX_ROWS = 500;
@@ -25,6 +25,9 @@ export default function DbPanel({ connectionId, onClose }: Props) {
   const [form, setForm] = useState({ username: "", password: "", port: "3306", database: "" });
   const [sql, setSql] = useState("select 1");
   const [result, setResult] = useState<DbQueryResult | null>(null);
+  const [schema, setSchema] = useState<SchemaSnapshot | null>(null);
+  const [schemaBusy, setSchemaBusy] = useState(false);
+  const [showTables, setShowTables] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   /** 回车连按时挡住第二次：setBusy 是异步的，光看 state 会漏 */
@@ -56,6 +59,42 @@ export default function DbPanel({ connectionId, onClose }: Props) {
     }
     void load(connectionId);
   }, [connectionId, load]);
+
+  const loadSchema = useCallback(async (id: string, refresh = false) => {
+    setSchemaBusy(true);
+    try {
+      const snapshot = await call<SchemaSnapshot>("db_schema", { connectionId: id, refresh });
+      setSchema(snapshot);
+    } catch {
+      // 拿不到表结构不该挡住查询：补全只是锦上添花，SQL 照常能跑
+      setSchema(null);
+    } finally {
+      setSchemaBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!connectionId || !account?.configured) {
+      setSchema(null);
+      return;
+    }
+    void loadSchema(connectionId);
+  }, [connectionId, account?.configured, loadSchema]);
+
+  /** 点表名填一条查询。
+   *
+   * 只在面板还是空的（或还是默认的 `select 1`）时替换，否则追加 ——
+   * 用户正在写一半的 SQL 不能被一次误点冲掉。
+   */
+  const insertTable = (table: TableSchema) => {
+    const qualified = account?.database ? `${account.database}.${table.name}` : table.name;
+    const statement = `select * from ${qualified} limit 20`;
+    setSql((prev) => {
+      const trimmed = prev.trim();
+      if (!trimmed || trimmed === "select 1") return statement;
+      return `${prev.trimEnd()}\n${statement}`;
+    });
+  };
 
   const save = async () => {
     if (!connectionId || busy) return;
@@ -142,7 +181,8 @@ export default function DbPanel({ connectionId, onClose }: Props) {
         <>
           <p className="db-tip">
             填服务器上 MySQL 的账号。密码存在本机加密存储里，和 SSH 凭据同一套；
-            查询时通过 SSH 通道在服务器上执行，不经过公网。
+            查询走 SSH 通道，不经过公网。密码留空则用服务器的 socket 认证 ——
+            root 配成 auth_socket 时就该留空。
           </p>
           <div className="db-setup">
             <label className="db-field">
@@ -160,7 +200,7 @@ export default function DbPanel({ connectionId, onClose }: Props) {
                 className="input"
                 type="password"
                 value={form.password}
-                placeholder={account.configured ? "重新输入（不回显）" : ""}
+                placeholder={account.configured ? "重新输入（不回显）" : "留空 = socket 认证"}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
               />
             </label>
@@ -210,6 +250,55 @@ export default function DbPanel({ connectionId, onClose }: Props) {
         </>
       ) : (
         <>
+          <div className="db-tables">
+            <div className="db-tables__head">
+              <span className="db-tables__title">
+                {schema ? `表 ${schema.tables.length}` : "表"}
+                {schema?.truncated ? "（已截断）" : ""}
+              </span>
+              <button
+                type="button"
+                className="db-tables__action"
+                disabled={schemaBusy}
+                onClick={() => void loadSchema(connectionId, true)}
+              >
+                {schemaBusy ? "读取中…" : "刷新"}
+              </button>
+              <button
+                type="button"
+                className="db-tables__action"
+                onClick={() => setShowTables((prev) => !prev)}
+              >
+                {showTables ? "收起" : "展开"}
+              </button>
+            </div>
+            {showTables ? (
+              schema && schema.tables.length > 0 ? (
+                <div className="db-tables__list">
+                  {schema.tables.map((table) => (
+                    <button
+                      key={table.name}
+                      type="button"
+                      className="db-tables__item"
+                      title={`${table.name}（${table.columns.length} 列）`}
+                      onClick={() => insertTable(table)}
+                    >
+                      {table.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="db-tables__hint">
+                  {schemaBusy
+                    ? "读取表结构…"
+                    : account.database
+                      ? "这个库里没有表，或者当前账号读不到 information_schema"
+                      : "先在上面填一个「默认库」，才能列出表"}
+                </p>
+              )
+            ) : null}
+          </div>
+
           <div className="db-editor">
             <textarea
               className="db-editor__input"

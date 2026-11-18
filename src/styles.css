@@ -4005,6 +4005,77 @@ a:focus-visible,
   padding: 0 12px 12px;
 }
 
+/* 表清单：解决"不记得表名"，比做自动补全便宜得多 */
+.db-tables {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-tables__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+}
+
+.db-tables__title {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.db-tables__action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.db-tables__action:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.db-tables__action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* 表多的时候这里自己滚，不能把编辑器挤下去 */
+.db-tables__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 104px;
+  padding: 0 12px 8px;
+  overflow: auto;
+}
+
+.db-tables__item {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.db-tables__item:hover {
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.db-tables__hint {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
+
 .db-editor {
   display: flex;
   flex: 0 0 auto;

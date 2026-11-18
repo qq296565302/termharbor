@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::commands::connections::prepare_probe;
+use crate::dbcli::schema::{self, SchemaSnapshot};
 use crate::dbcli::{self, QueryResult};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -91,9 +92,8 @@ pub async fn db_account_save(
     if username.is_empty() {
         return Err(AppError::validation("数据库用户名不能为空"));
     }
-    if input.password.is_empty() {
-        return Err(AppError::validation("数据库密码不能为空"));
-    }
+    // 密码允许留空：root 配成 auth_socket 时服务器上本来就没有密码，
+    // 留空就让 mysql 走 socket 认证。填错了仍然会 1045，不会静默放行。
     if input.port == 0 {
         return Err(AppError::validation("端口要在 1–65535 之间"));
     }
@@ -165,6 +165,49 @@ pub async fn db_databases(
         .into_iter()
         .filter_map(|row| row.first().cloned())
         .collect())
+}
+
+/// 当前默认库的表和列，给补全和表清单用。
+///
+/// 命中缓存时是纯内存操作，不会碰网络；`refresh = true` 强制重拉。
+#[tauri::command]
+pub async fn db_schema(
+    state: State<'_, AppState>,
+    connection_id: String,
+    refresh: Option<bool>,
+) -> AppResult<SchemaSnapshot> {
+    let cipher = state.require_cipher()?;
+
+    let rec = state
+        .db
+        .call({
+            let id = connection_id.clone();
+            move |conn| db_accounts::get(conn, &id)
+        })
+        .await?
+        .ok_or_else(|| {
+            AppError::validation("这台服务器还没配数据库账号，先在面板里填一次用户名和密码")
+        })?;
+
+    if !refresh.unwrap_or(false) {
+        if let Some(snapshot) = state
+            .dblinks
+            .cached_schema(&connection_id, &rec.database_name)
+        {
+            return Ok(snapshot);
+        }
+    }
+
+    let password = cipher.decrypt_string(&rec.password_blob)?;
+    let prepared = prepare_probe(&state, Some(connection_id.clone()), None, None).await?;
+    let handle = state
+        .dblinks
+        .handle(&connection_id, &prepared.request)
+        .await?;
+
+    let snapshot = schema::fetch(&handle, &rec, &password).await?;
+    state.dblinks.store_schema(&connection_id, snapshot.clone());
+    Ok(snapshot)
 }
 
 /// 取账号 → 解密 → 连上 → 执行。`db_query` 和 `db_databases` 共用。
